@@ -9,7 +9,7 @@ import yfinance as yf
 import os
 
 # --- Stock-Specific Configuration ---
-CURRENT_STOCK = "SBI" # <--- CHANGED FROM IRCTC TO SBI
+CURRENT_STOCK = "SBI"
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
@@ -120,24 +120,35 @@ def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
 @st.cache_data(ttl=5 * 60) # Cache for 5 minutes
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
-    print(f"Attempting yfinance live price for: {yf_symbol}")
+    print(f"[DEBUG] Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
-        live_price = ticker.info.get('regularMarketPrice') 
+        # Fetch basic info first
+        ticker_info = ticker.info
+        print(f"[DEBUG] Ticker info for {yf_symbol}: {ticker_info}") # Log the full info dict
+
+        # Try multiple common price fields in order of preference
+        live_price = None
+        for price_key in ['regularMarketPrice', 'currentPrice', 'bid', 'ask']:
+            if price_key in ticker_info and ticker_info[price_key] is not None:
+                live_price = ticker_info[price_key]
+                print(f"[DEBUG] Found price from '{price_key}': {live_price}")
+                break # Found a price, stop checking
+
         if live_price is not None:
-            print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
+            print(f"[DEBUG] yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
             return float(live_price)
         else:
-            print(f"yfinance: No live price found for {yf_symbol} in ticker info. Generating mock.")
+            print(f"[DEBUG] yfinance: No live price found for {yf_symbol} in common keys. Generating mock.")
             return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
     except Exception as e:
-        print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
+        print(f"[DEBUG] Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
 
 @st.cache_data(ttl=15 * 60) # Cache for 15 minutes
 def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
-    print(f"Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
+    print(f"[DEBUG] Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
 
     period_map = {'5m': '1d', '1d': '5d', '1w': '1mo', '1m': '3mo', '1y': '1y'}
     interval_map = {'5m': '5m', '1d': '60m', '1w': '1d', '1m': '1d', '1y': '1d'}
@@ -153,13 +164,13 @@ def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
             df = df.rename(columns={"Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Volume": "Volume"})
             df = df[["Open", "High", "Low", "Close", "Volume"]]
             df.index.name = 'Date'
-            print(f"yfinance: Successfully fetched {len(df)} historical points for {yf_symbol} ({timeframe}).")
+            print(f"[DEBUG] yfinance: Successfully fetched {len(df)} historical points for {yf_symbol} ({timeframe}).")
             return df
         else:
-            print(f"yfinance: No historical data found for {yf_symbol} ({timeframe}). Generating mock.")
+            print(f"[DEBUG] yfinance: No historical data found for {yf_symbol} ({timeframe}). Generating mock.")
             return generate_mock_stock_data_local(timeframe=timeframe)
     except Exception as e:
-        print(f"Fallback: yfinance historical data failed for {yf_symbol} ({timeframe}): {e}. Generating mock.")
+        print(f"[DEBUG] Fallback: yfinance historical data failed for {yf_symbol} ({timeframe}): {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe=timeframe)
 
 # --- News API Integration (NewsAPI.org) ---
@@ -184,7 +195,7 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         "pageSize": 20
     }
     
-    print(f"Attempting NewsAPI.org for query: '{query}'")
+    print(f"[DEBUG] Attempting NewsAPI.org for query: '{query}'")
     try:
         response = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
         response.raise_for_status()
@@ -201,13 +212,13 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                     "publishedAt": article.get("publishedAt", "N/A"),
                     "event": "General News"
                 })
-            print(f"NewsAPI.org: Successfully fetched {len(articles)} news articles for '{query}'.")
+            print(f"[DEBUG] NewsAPI.org: Successfully fetched {len(articles)} news articles for '{query}'.")
             return articles
         elif data["status"] == "error":
             error_msg = data['message']
-            print(f"NewsAPI.org Error for '{query}': {error_msg}")
+            print(f"[DEBUG] NewsAPI.org Error for '{query}': {error_msg}")
             if "maximum results for free plan" in error_msg:
-                print(f"Fallback: NewsAPI.org free plan limit. Returning mock news.")
+                print(f"[DEBUG] Fallback: NewsAPI.org free plan limit. Returning mock news.")
                 return [{
                     "source": "Mock News", "title": f"Mock News for {query} - Rate Limit",
                     "content": "This is a mock news article due to NewsAPI.org rate limits.",
@@ -219,14 +230,14 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                 "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
             }]
     except requests.exceptions.Timeout:
-        print(f"Fallback: NewsAPI.org Timeout for '{query}'. Returning mock news.")
+        print(f"[DEBUG] Fallback: NewsAPI.org Timeout for '{query}'. Returning mock news.")
         return [{
             "source": "Mock News", "title": f"Mock News for {query} - Timeout",
             "content": "This is a mock news article due to NewsAPI.org timeout.",
             "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
         }]
     except requests.exceptions.RequestException as e:
-        print(f"Fallback: NewsAPI.org Request failed for '{query}': {e}. Returning mock news.")
+        print(f"[DEBUG] Fallback: NewsAPI.org Request failed for '{query}': {e}. Returning mock news.")
         return [{
             "source": "Mock News", "title": f"Mock News for {query} - Request Failed",
             "content": "This is a mock news article due to NewsAPI.org request failure.",
@@ -244,7 +255,6 @@ st.markdown("---")
 st.subheader("Current Market Prices")
 
 # Fetch both BSE and NSE prices using yfinance directly
-# Use specific symbols for BSE/NSE if known to yfinance
 bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: SBI.BO for BSE
 nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: SBI.NS for NSE
 
