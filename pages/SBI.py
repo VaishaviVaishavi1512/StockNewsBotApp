@@ -1,41 +1,45 @@
-# pages/SBI.py
+# pages/SBI.py # Changed file name
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
-import yfinance as yf # Import yfinance
+import yfinance as yf
 import os
 
 # --- Stock-Specific Configuration ---
-CURRENT_STOCK = "SBI" # <--- This is correctly set to SBI
+CURRENT_STOCK = "SBI" # Changed from "IRCTC" to "SBI"
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-               "Please add it to your Streamlit secrets or environment variables.")
+                "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
+    # Updated keywords for SBI, keeping generic ones for other stocks
     if current_stock_symbol.lower() in text_lower or \
-       "indian railways catering" in text_lower or \
        "state bank of india" in text_lower or \
+       "sbi" in text_lower or \
+       "indian railways catering" in text_lower or \
        "tata motors" in text_lower or \
        "bharat electronics" in text_lower or \
        "indigo airlines" in text_lower or \
        "bel" in text_lower or \
-       "sbi" in text_lower:
+       "irctc" in text_lower: # Added irctc back for broader keyword matching
         return current_stock_symbol
     return "N/A"
 
 def analyze_sentiment(text):
-    positive_keywords = ["profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth", "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations", "robust", "healthy", "gains", "partnership", "collaboration", "launch"]
-    negative_keywords = ["loss", "headwinds", "rising fuel", "supply chain issues", "missed", "resigned", "downgrade", "decline", "fall", "struggle", "uncertainty", "volatility", "challenges"]
-    neutral_keywords = ["board approves", "plans", "announces", "decision", "discussions", "talks", "quarterly results"]
+    # These keywords are generally applicable to most companies, including banks.
+    # You could add specific banking terms if you want more fine-grained analysis for banks.
+    positive_keywords = ["profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth", "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations", "robust", "healthy", "gains", "partnership", "collaboration", "launch", "loan growth", "deposit growth", "asset quality improves", "NPA reduction", "credit expansion"] # Added banking specific positive keywords
+    negative_keywords = ["loss", "headwinds", "rising fuel", "supply chain issues", "missed", "resigned", "downgrade", "decline", "fall", "struggle", "uncertainty", "volatility", "challenges", "NPA increase", "fraud", "scam", "regulatory fine"] # Added banking specific negative keywords
+    neutral_keywords = ["board approves", "plans", "announces", "decision", "discussions", "talks", "quarterly results", "RBI", "policy", "interest rates"] # Added banking specific neutral keywords
 
     score = 0
     text_lower = text.lower()
@@ -83,7 +87,8 @@ def map_news_to_action(sentiment):
 # --- Mock Data Generation (Fallback if yfinance/NewsAPI fail) ---
 def generate_mock_stock_data_local(timeframe, num_points_override=None):
     data = []
-    last_close = np.random.uniform(980, 1020)
+    # Adjusted initial price range for SBI (typically lower than IRCTC's current values)
+    last_close = np.random.uniform(600, 700) 
     interval_seconds = 0
     num_points = 0
 
@@ -113,6 +118,10 @@ def generate_mock_stock_data_local(timeframe, num_points_override=None):
 
 # --- Financial Data Integration (yfinance) ---
 def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
+    # SBI's symbol on NSE is SBIN.NS, and on BSE is SBIN.BO
+    if symbol.upper() == "SBI":
+        if exchange.upper() == "NSE": return "SBIN.NS" # Specific symbol for SBI on NSE
+        elif exchange.upper() == "BSE": return "SBIN.BO" # Specific symbol for SBI on BSE
     if exchange.upper() == "NSE": return f"{symbol}.NS"
     elif exchange.upper() == "BSE": return f"{symbol}.BO"
     return symbol
@@ -120,35 +129,24 @@ def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
 @st.cache_data(ttl=5 * 60) # Cache for 5 minutes
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
-    print(f"[DEBUG] Attempting yfinance live price for: {yf_symbol}")
+    print(f"Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
-        # Fetch basic info first
-        ticker_info = ticker.info
-        print(f"[DEBUG] Ticker info for {yf_symbol}: {ticker_info}") # Log the full info dict
-
-        # Try multiple common price fields in order of preference
-        live_price = None
-        for price_key in ['regularMarketPrice', 'currentPrice', 'bid', 'ask']:
-            if price_key in ticker_info and ticker_info[price_key] is not None:
-                live_price = ticker_info[price_key]
-                print(f"[DEBUG] Found price from '{price_key}': {live_price}")
-                break # Found a price, stop checking
-
+        live_price = ticker.info.get('regularMarketPrice') 
         if live_price is not None:
-            print(f"[DEBUG] yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
+            print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
             return float(live_price)
         else:
-            print(f"[DEBUG] yfinance: No live price found for {yf_symbol} in common keys. Generating mock.")
+            print(f"yfinance: No live price found for {yf_symbol} in ticker info. Generating mock.")
             return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
     except Exception as e:
-        print(f"[DEBUG] Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
+        print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
 
 @st.cache_data(ttl=15 * 60) # Cache for 15 minutes
 def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
-    print(f"[DEBUG] Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
+    print(f"Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
 
     period_map = {'5m': '1d', '1d': '5d', '1w': '1mo', '1m': '3mo', '1y': '1y'}
     interval_map = {'5m': '5m', '1d': '60m', '1w': '1d', '1m': '1d', '1y': '1d'}
@@ -164,13 +162,13 @@ def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
             df = df.rename(columns={"Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Volume": "Volume"})
             df = df[["Open", "High", "Low", "Close", "Volume"]]
             df.index.name = 'Date'
-            print(f"[DEBUG] yfinance: Successfully fetched {len(df)} historical points for {yf_symbol} ({timeframe}).")
+            print(f"yfinance: Successfully fetched {len(df)} historical points for {yf_symbol} ({timeframe}).")
             return df
         else:
-            print(f"[DEBUG] yfinance: No historical data found for {yf_symbol} ({timeframe}). Generating mock.")
+            print(f"yfinance: No historical data found for {yf_symbol} ({timeframe}). Generating mock.")
             return generate_mock_stock_data_local(timeframe=timeframe)
     except Exception as e:
-        print(f"[DEBUG] Fallback: yfinance historical data failed for {yf_symbol} ({timeframe}): {e}. Generating mock.")
+        print(f"Fallback: yfinance historical data failed for {yf_symbol} ({timeframe}): {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe=timeframe)
 
 # --- News API Integration (NewsAPI.org) ---
@@ -195,7 +193,7 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         "pageSize": 20
     }
     
-    print(f"[DEBUG] Attempting NewsAPI.org for query: '{query}'")
+    print(f"Attempting NewsAPI.org for query: '{query}'")
     try:
         response = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
         response.raise_for_status()
@@ -212,13 +210,13 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                     "publishedAt": article.get("publishedAt", "N/A"),
                     "event": "General News"
                 })
-            print(f"[DEBUG] NewsAPI.org: Successfully fetched {len(articles)} news articles for '{query}'.")
+            print(f"NewsAPI.org: Successfully fetched {len(articles)} news articles for '{query}'.")
             return articles
         elif data["status"] == "error":
             error_msg = data['message']
-            print(f"[DEBUG] NewsAPI.org Error for '{query}': {error_msg}")
+            print(f"NewsAPI.org Error for '{query}': {error_msg}")
             if "maximum results for free plan" in error_msg:
-                print(f"[DEBUG] Fallback: NewsAPI.org free plan limit. Returning mock news.")
+                print(f"Fallback: NewsAPI.org free plan limit. Returning mock news.")
                 return [{
                     "source": "Mock News", "title": f"Mock News for {query} - Rate Limit",
                     "content": "This is a mock news article due to NewsAPI.org rate limits.",
@@ -230,14 +228,14 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                 "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
             }]
     except requests.exceptions.Timeout:
-        print(f"[DEBUG] Fallback: NewsAPI.org Timeout for '{query}'. Returning mock news.")
+        print(f"Fallback: NewsAPI.org Timeout for '{query}'. Returning mock news.")
         return [{
             "source": "Mock News", "title": f"Mock News for {query} - Timeout",
             "content": "This is a mock news article due to NewsAPI.org timeout.",
             "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
         }]
     except requests.exceptions.RequestException as e:
-        print(f"[DEBUG] Fallback: NewsAPI.org Request failed for '{query}': {e}. Returning mock news.")
+        print(f"Fallback: NewsAPI.org Request failed for '{query}': {e}. Returning mock news.")
         return [{
             "source": "Mock News", "title": f"Mock News for {query} - Request Failed",
             "content": "This is a mock news article due to NewsAPI.org request failure.",
@@ -256,8 +254,8 @@ st.subheader("Current Market Prices")
 
 # Fetch both BSE and NSE prices using yfinance directly
 # Use specific symbols for BSE/NSE if known to yfinance
-bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: SBI.BO for BSE
-nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: SBI.NS for NSE
+bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") 
+nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") 
 
 if bse_price is not None and nse_price is not None:
     st.markdown(f"""
@@ -338,7 +336,8 @@ st.markdown("---")
 st.subheader(f"Latest News for {CURRENT_STOCK}")
 
 # Fetch news and analysis directly
-raw_articles = get_financial_news_api(f"{CURRENT_STOCK} stock") # Pass query to API function
+# Changed news query to be more specific for SBI
+raw_articles = get_financial_news_api(f"State Bank of India OR SBI stock") 
 
 processed_news = []
 latest_trading_signal = {
@@ -398,15 +397,15 @@ else:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                            {news['sentiment'].upper()}
-                        </span>
-                        <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                        <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                            {news['recommended_action']}
-                        </span>
+                                {news['sentiment'].upper()}
+                            </span>
+                            <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                            <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                                {news['recommended_action']}
+                            </span>
+                        </div>
                     </div>
-                </div>
-                """
+                    """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
