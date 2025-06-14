@@ -5,11 +5,11 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
-import yfinance as yf
+import yfinance as yf # Import yfinance
 import os
 
 # --- Stock-Specific Configuration ---
-CURRENT_STOCK = "SBI"
+CURRENT_STOCK = "SBI" # <--- This is correctly set to SBI
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
@@ -255,6 +255,7 @@ st.markdown("---")
 st.subheader("Current Market Prices")
 
 # Fetch both BSE and NSE prices using yfinance directly
+# Use specific symbols for BSE/NSE if known to yfinance
 bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: SBI.BO for BSE
 nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: SBI.NS for NSE
 
