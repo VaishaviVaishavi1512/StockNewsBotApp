@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
-import time # Import the time module for sleep functionality
+import time # Import the time module for sleep
 
 # --- Stock-Specific Configuration ---
 CURRENT_STOCK = "IRCTC"
@@ -20,7 +20,7 @@ NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-                "Please add it to your Streamlit secrets or environment variables.")
+               "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 # These functions were previously in backend_app.py
@@ -122,26 +122,24 @@ def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
     elif exchange.upper() == "BSE": return f"{symbol}.BO"
     return symbol
 
-# For live price, we will keep the cache but note that it limits the actual API call frequency.
-# If truly real-time (every second) is needed, remove ttl, but be wary of API limits.
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
-def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
+# Removed caching from live price to allow for more frequent updates in the loop below
+def get_live_stock_price_yf_uncached(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
-    # print(f"Attempting yfinance live price for: {yf_symbol}") # Uncomment for debugging
+    # print(f"Attempting yfinance live price for: {yf_symbol}") # Debugging
     try:
         ticker = yf.Ticker(yf_symbol)
         live_price = ticker.info.get('regularMarketPrice') 
         if live_price is not None:
-            # print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}") # Uncomment for debugging
+            # print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}") # Debugging
             return float(live_price)
         else:
-            # print(f"yfinance: No live price found for {yf_symbol} in ticker info. Generating mock.") # Uncomment for debugging
+            # print(f"yfinance: No live price found for {yf_symbol} in ticker info. Generating mock.") # Debugging
             return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
     except Exception as e:
-        # print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.") # Uncomment for debugging
+        # print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.") # Debugging
         return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
 
-@st.cache_data(ttl=15 * 60) # Cache for 15 minutes
+@st.cache_data(ttl=15 * 60) # Cache for 15 minutes, as historical data doesn't need second-by-second updates
 def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
@@ -246,27 +244,44 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 st.header(f"📈 Detailed Dashboard: {CURRENT_STOCK}")
 st.write(f"Comprehensive insights for {CURRENT_STOCK} on BSE/NSE.")
 
-# --- Live Price Monitoring Feature ---
+# --- Live Price Monitoring Section with Auto-Refresh ---
 st.markdown("---")
-st.subheader("Live Price Monitoring")
+st.subheader("Current Market Prices (Live Updates)")
 
-# Create a placeholder for dynamic updates of the live prices
-live_price_placeholder = st.empty()
+# Create a placeholder for the live price display
+price_placeholder = st.empty()
 
-# You can adjust the refresh interval (in seconds)
-# Note: yfinance data generally updates every 5 minutes during market hours,
-# so a refresh interval below 300 seconds might hit the cache frequently.
-REFRESH_INTERVAL_SECONDS = 15 
+# Add a toggle for live updates
+live_update_enabled = st.checkbox("Enable Live Price Updates (Every 10 seconds)", value=True)
 
-# Use a loop to continuously update the price
-while True:
-    with live_price_placeholder.container():
-        st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+if live_update_enabled:
+    while True: # Infinite loop for continuous updates
+        bse_price = get_live_stock_price_yf_uncached(CURRENT_STOCK, "BSE") 
+        nse_price = get_live_stock_price_yf_uncached(CURRENT_STOCK, "NSE") 
 
-        # Fetch both BSE and NSE prices using yfinance directly
-        bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: IRCTC.BO for BSE
-        nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: IRCTC.NS for NSE
+        with price_placeholder.container(): # Update content within the placeholder
+            if bse_price is not None and nse_price is not None:
+                st.markdown(f"""
+                <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="text-align: center;">
+                        <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
+                        <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
+                        <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+        
+        time.sleep(10) # Wait for 10 seconds before fetching and updating again
 
+else: # If live updates are disabled, just show a static price (once)
+    bse_price = get_live_stock_price_yf_uncached(CURRENT_STOCK, "BSE") 
+    nse_price = get_live_stock_price_yf_uncached(CURRENT_STOCK, "NSE") 
+    with price_placeholder.container():
         if bse_price is not None and nse_price is not None:
             st.markdown(f"""
             <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
@@ -281,10 +296,7 @@ while True:
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
-    
-    # Wait for the specified interval before the next refresh
-    time.sleep(REFRESH_INTERVAL_SECONDS)
+            st.info("Live updates are disabled. Displaying static price (using mock if API fails).")
 
 
 # Timeframe Controls
@@ -299,6 +311,7 @@ selected_timeframe = st.radio(
 )
 
 # Generate stock data based on selection (fetched directly here from yfinance)
+# Note: The historical data fetch uses caching (15 minutes), so it won't update as frequently as the live price.
 stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
 
 # --- Graphs Section (Stacked Vertically) ---
