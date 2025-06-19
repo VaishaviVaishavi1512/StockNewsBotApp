@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
+import pytz # NEW: Import pytz for timezone handling
 
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
@@ -324,8 +325,11 @@ with price_placeholder.container():
     else:
         st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
     
-    # Display last updated timestamp for clarity
-    st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
+    # Get current time in IST for display
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    current_ist_time = datetime.now(ist_timezone)
+    formatted_time = current_ist_time.strftime('%Y-%m-%d %H:%M:%S IST') # Added IST for clarity
+    st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {formatted_time}</p>", unsafe_allow_html=True)
 
 
 # Timeframe Controls
@@ -407,6 +411,9 @@ latest_trading_signal = {
 if not raw_articles:
     st.info(f"No news found for {CURRENT_STOCK}.")
 else:
+    # Define IST timezone once
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+
     for i, news_item in enumerate(raw_articles):
         full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
         
@@ -415,12 +422,27 @@ else:
         sentiment = analyze_sentiment(full_text)
         action_data = map_news_to_action(sentiment)
 
+        # Convert publishedAt to IST
+        published_utc_str = news_item.get("publishedAt", "N/A")
+        published_ist_str = "N/A"
+        if published_utc_str != "N/A":
+            try:
+                # Parse the UTC timestamp provided by NewsAPI (e.g., "2023-10-27T10:00:00Z")
+                published_utc = datetime.strptime(published_utc_str, '%Y-%m-%dT%H:%M:%SZ')
+                # Make it timezone-aware (as UTC) and then convert to IST
+                published_ist = published_utc.replace(tzinfo=pytz.utc).astimezone(ist_timezone)
+                published_ist_str = published_ist.strftime('%Y-%m-%d %H:%M:%S IST')
+            except ValueError:
+                # Handle cases where publishedAt might be in a different format or invalid
+                published_ist_str = f"Invalid Date Format: {published_utc_str}"
+
+
         processed_news_item = {
             "source": news_item["source"],
             "title": news_item["title"],
             "content": news_item["content"],
             "url": news_item["url"],
-            "publishedAt": news_item["publishedAt"],
+            "publishedAt": published_ist_str, # Use IST formatted string here
             "sentiment": sentiment,
             "event": news_item["event"],
             "recommended_action": action_data["recommended_action"],
@@ -433,7 +455,7 @@ else:
             latest_trading_signal = {
                 "ticker": ticker_identified,
                 "sentiment": sentiment,
-                "event": news_item["event"],
+                "event": news_item["event"], # Original event might be more general
                 "confidence": action_data["confidence"],
                 "recommended_action": action_data["recommended_action"],
                 "stop_loss": action_data["stop_loss"],
@@ -444,7 +466,7 @@ else:
     for i, news in enumerate(processed_news):
         news_html = f"""
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt'][:10]}</p>
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p> {/* Use updated 'publishedAt' */}
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>
