@@ -7,9 +7,13 @@ from datetime import datetime, timedelta
 import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
+import pytz # NEW: Import pytz for timezone handling
+
+# --- NEW: Import streamlit_autorefresh for live updates ---
+from streamlit_autorefresh import st_autorefresh
 
 # --- Stock-Specific Configuration ---
-CURRENT_STOCK = "BEL" # Changed to BEL
+CURRENT_STOCK = "BEL"
 FULL_STOCK_NAME = "Bharat Electronics Limited" # Added for better display
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
@@ -22,11 +26,27 @@ if not NEWS_API_KEY:
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
-    # Updated to specifically look for BEL and its full name
-    if current_stock_symbol.lower() in text_lower or \
-       FULL_STOCK_NAME.lower() in text_lower or \
-       "bharat electronics" in text_lower:
-        return current_stock_symbol
+    # Updated to check for common names/aliases for better NER for BEL
+    stock_aliases = {
+        "IRCTC": ["irctc", "indian railways catering", "railways"],
+        "SBI": ["sbi", "state bank of india"],
+        "TATA MOTORS": ["tata motors", "tata"],
+        "BEL": ["bharat electronics", "bel"], # Updated for BEL
+        "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
+    }
+       
+    # Check if any alias for the current stock is in the text
+    for alias in stock_aliases.get(current_stock_symbol.upper(), []):
+        if alias in text_lower:
+            return current_stock_symbol
+           
+    # Also check for other stock symbols if they appear in news for this page
+    for stock_sym, aliases in stock_aliases.items():
+        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
+            # If another stock is mentioned, return its symbol.
+            # This is a simple NER, can be expanded with more robust models.
+            return stock_sym
+               
     return "N/A"
 
 def analyze_sentiment(text):
@@ -36,7 +56,7 @@ def analyze_sentiment(text):
 
     score = 0
     text_lower = text.lower()
-    
+       
     for keyword in positive_keywords:
         if keyword in text_lower:
             score += 1
@@ -110,17 +130,42 @@ def generate_mock_stock_data_local(timeframe, num_points_override=None):
 
 # --- Financial Data Integration (yfinance) ---
 def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
-    if exchange.upper() == "NSE": return f"{symbol}.NS"
-    elif exchange.upper() == "BSE": return f"{symbol}.BO"
-    return symbol
+    # Updated mapping based on the user's provided simplified function for BEL
+    symbol_map = {
+        "IRCTC": "IRCTC.NS",
+        "SBI": "SBIN.NS",
+        "TATA MOTORS": "TATAMOTORS.NS",
+        "BEL": "BEL.NS", # Explicitly for BEL
+        "INDIGO AIRLINES": "INDIGO.NS"
+    }
+    
+    yf_base_symbol = symbol_map.get(symbol.upper(), symbol) # Use mapped symbol if available
 
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+    if exchange.upper() == "NSE": return f"{yf_base_symbol}"
+    elif exchange.upper() == "BSE":
+        if not yf_base_symbol.endswith(".NS") and not yf_base_symbol.endswith(".BO"):
+            return f"{yf_base_symbol}.BO"
+        return yf_base_symbol
+    return yf_base_symbol # Fallback
+
+@st.cache_data(ttl=30) # Cache for 30 seconds for "live" price. St_autorefresh will trigger.
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
-        live_price = ticker.info.get('regularMarketPrice') 
+        # Use 'regularMarketPrice' for current price
+        live_price = ticker.info.get('regularMarketPrice')
+        # Fallback to 'currentPrice' or 'dayHigh'/'dayLow' if market is closed or info incomplete
+        if live_price is None:
+            live_price = ticker.info.get('currentPrice')
+        if live_price is None:
+            # As a last resort, take the last close from recent history if nothing else works
+            hist_data = ticker.history(period="1d", interval="1m")
+            if not hist_data.empty:
+                live_price = hist_data['Close'].iloc[-1]
+
+
         if live_price is not None:
             print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
             return float(live_price)
@@ -180,13 +225,13 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         "apiKey": NEWS_API_KEY,
         "pageSize": 20
     }
-    
+       
     print(f"Attempting NewsAPI.org for query: '{query}'")
     try:
         response = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-        
+           
         if data["status"] == "ok":
             articles = []
             for article in data["articles"]:
@@ -233,34 +278,47 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 
 # --- Streamlit UI Components ---
 
-st.header(f"📈 Detailed Dashboard: {FULL_STOCK_NAME} ({CURRENT_STOCK})")
+st.header(f"📈 Detailed Dashboard: {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 st.write(f"Comprehensive insights for {FULL_STOCK_NAME} on BSE/NSE.")
+
+# --- NEW: Auto-refresh the page every 30 seconds for live updates ---
+# This will cause the entire script to re-run, fetching fresh prices/news if caches expire.
+st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")    
+
 
 # Display BSE and NSE prices (fetched directly here from yfinance)
 st.markdown("---")
 st.subheader("Current Market Prices")
 
-# Fetch both BSE and NSE prices using yfinance directly
-# Use specific symbols for BSE/NSE if known to yfinance
-# BEL's NSE symbol is BEL.NS, BSE is 500055.BO (though yfinance might prefer BEL.BO for BSE)
-bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") 
-nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") 
+price_placeholder = st.empty()
 
-if bse_price is not None and nse_price is not None:
-    st.markdown(f"""
-    <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+# Fetch both BSE and NSE prices using yfinance directly
+bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE")
+nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE")
+
+with price_placeholder.container():
+    if bse_price is not None and nse_price is not None:
+        st.markdown(f"""
+        <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+            </div>
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
+            </div>
         </div>
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+       
+    # Get current time in IST for display
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    current_ist_time = datetime.now(ist_timezone)
+    formatted_time = current_ist_time.strftime('%Y-%m-%d %H:%M:%S IST') # Added IST for clarity
+    st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {formatted_time}</p>", unsafe_allow_html=True)
+
 
 # Timeframe Controls
 st.subheader("Select Timeframe:")
@@ -278,7 +336,7 @@ stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # 
 
 # --- Graphs Section (Stacked Vertically) ---
 st.markdown("---")
-st.subheader(f"Price Charts for {FULL_STOCK_NAME}")
+st.subheader(f"Price Charts for {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 
 if not stock_data.empty:
     # Candlestick Chart
@@ -317,15 +375,15 @@ if not stock_data.empty:
     )
     st.plotly_chart(fig_line, use_container_width=True)
 else:
-    st.warning(f"No stock data available for {FULL_STOCK_NAME} for the selected timeframe. Check yfinance compatibility for this symbol.")
+    st.warning(f"No stock data available for {CURRENT_STOCK} for the selected timeframe. Check yfinance compatibility for this symbol.")
 
 
 # --- News Feed Section (fetched directly and processed) ---
 st.markdown("---")
-st.subheader(f"Latest News for {FULL_STOCK_NAME}")
+st.subheader(f"Latest News for {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 
 # Fetch news and analysis directly
-raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock") # Pass query to API function
+raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock") # Pass full name to API for better results
 
 processed_news = []
 latest_trading_signal = {
@@ -341,20 +399,38 @@ latest_trading_signal = {
 if not raw_articles:
     st.info(f"No news found for {FULL_STOCK_NAME}.")
 else:
+    # Define IST timezone once
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+
     for i, news_item in enumerate(raw_articles):
         full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
-        
+           
         # Perform NLP and action mapping directly
         ticker_identified = perform_ner(full_text, CURRENT_STOCK)
         sentiment = analyze_sentiment(full_text)
         action_data = map_news_to_action(sentiment)
+
+        # Convert publishedAt to IST
+        published_utc_str = news_item.get("publishedAt", "N/A")
+        published_ist_str = "N/A"
+        if published_utc_str != "N/A":
+            try:
+                # Parse the UTC timestamp provided by NewsAPI (e.g., "2023-10-27T10:00:00Z")
+                published_utc = datetime.strptime(published_utc_str, '%Y-%m-%dT%H:%M:%SZ')
+                # Make it timezone-aware (as UTC) and then convert to IST
+                published_ist = published_utc.replace(tzinfo=pytz.utc).astimezone(ist_timezone)
+                published_ist_str = published_ist.strftime('%Y-%m-%d %H:%M:%S IST')
+            except ValueError:
+                # Handle cases where publishedAt might be in a different format or invalid
+                published_ist_str = f"Invalid Date Format: {published_utc_str}"
+
 
         processed_news_item = {
             "source": news_item["source"],
             "title": news_item["title"],
             "content": news_item["content"],
             "url": news_item["url"],
-            "publishedAt": news_item["publishedAt"],
+            "publishedAt": published_ist_str, # Use IST formatted string here
             "sentiment": sentiment,
             "event": news_item["event"],
             "recommended_action": action_data["recommended_action"],
@@ -367,7 +443,7 @@ else:
             latest_trading_signal = {
                 "ticker": ticker_identified,
                 "sentiment": sentiment,
-                "event": news_item["event"],
+                "event": news_item["event"], # Original event might be more general
                 "confidence": action_data["confidence"],
                 "recommended_action": action_data["recommended_action"],
                 "stop_loss": action_data["stop_loss"],
@@ -378,7 +454,7 @@ else:
     for i, news in enumerate(processed_news):
         news_html = f"""
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt'][:10]}</p>
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>    
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>
@@ -392,8 +468,8 @@ else:
                                 {news['recommended_action']}
                             </span>
                         </div>
-                        </div>
-                        """
+                    </div>
+                    """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
