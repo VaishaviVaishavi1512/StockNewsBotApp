@@ -5,8 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
-import yfinance as yf # Import yfinance directly
-import os # To access environment variables if st.secrets not used (for local testing mostly)
+import yfinance as yf  # Import yfinance directly
+import os  # To access environment variables if st.secrets not used (for local testing mostly)
+import time  # For sleep and auto-refresh functionality
 
 # --- Stock-Specific Configuration ---
 CURRENT_STOCK = "IRCTC"
@@ -121,7 +122,7 @@ def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
     elif exchange.upper() == "BSE": return f"{symbol}.BO"
     return symbol
 
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+@st.cache_data(ttl=5 * 60)  # Cache for 5 minutes
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance live price for: {yf_symbol}")
@@ -138,7 +139,7 @@ def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
         print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
 
-@st.cache_data(ttl=15 * 60) # Cache for 15 minutes
+@st.cache_data(ttl=15 * 60)  # Cache for 15 minutes
 def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
@@ -167,7 +168,7 @@ def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
         return generate_mock_stock_data_local(timeframe=timeframe)
 
 # --- News API Integration (NewsAPI.org) ---
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+@st.cache_data(ttl=5 * 60)  # Cache for 5 minutes
 def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'relevancy', days_back: int = 30):
     if not NEWS_API_KEY:
         print("Fallback: NEWS_API_KEY not set. Returning mock news.")
@@ -217,7 +218,7 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                     "content": "This is a mock news article due to NewsAPI.org rate limits.",
                     "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
                 }]
-            return [{ # Fallback for other NewsAPI errors
+            return [{  # Fallback for other NewsAPI errors
                 "source": "Mock News", "title": f"Mock News for {query} - API Error: {error_msg}",
                 "content": "News fetching failed. Using mock data.",
                 "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
@@ -238,7 +239,9 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         }]
 
 
-# --- Streamlit UI Components ---
+# ---------------------------
+# Streamlit UI Components
+# ---------------------------
 
 st.header(f"📈 Detailed Dashboard: {CURRENT_STOCK}")
 st.write(f"Comprehensive insights for {CURRENT_STOCK} on BSE/NSE.")
@@ -249,8 +252,8 @@ st.subheader("Current Market Prices")
 
 # Fetch both BSE and NSE prices using yfinance directly
 # Use specific symbols for BSE/NSE if known to yfinance
-bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: IRCTC.BO for BSE
-nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: IRCTC.NS for NSE
+bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE")  # Example: IRCTC.BO for BSE
+nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE")  # Example: IRCTC.NS for NSE
 
 if bse_price is not None and nse_price is not None:
     st.markdown(f"""
@@ -268,21 +271,57 @@ if bse_price is not None and nse_price is not None:
 else:
     st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
 
+# --- Live Price Monitor Section ---
+st.markdown("---")
+st.subheader("🔁 Live Price Monitor (NSE - Refreshes Every Few Seconds)")
+
+refresh_rate = st.slider("Set refresh interval (in seconds)", min_value=3, max_value=30, value=5)
+
+if "irctc_prev_price" not in st.session_state:
+    st.session_state.irctc_prev_price = 0
+
+live_placeholder = st.empty()
+change_placeholder = st.empty()
+
+def show_live_price():
+    nse_live = get_live_stock_price_yf(CURRENT_STOCK, "NSE")
+    prev = st.session_state.irctc_prev_price
+    st.session_state.irctc_prev_price = nse_live
+    change = ((nse_live - prev) / prev * 100) if prev else 0
+
+    if change > 0.2:
+        live_placeholder.markdown(f"### 🟢 ₹{nse_live:.2f}")
+        change_placeholder.success(f"↑ {change:.2f}% since last refresh")
+    elif change < -0.2:
+        live_placeholder.markdown(f"### 🔴 ₹{nse_live:.2f}")
+        change_placeholder.error(f"↓ {change:.2f}% since last refresh")
+    else:
+        live_placeholder.markdown(f"### ₹{nse_live:.2f}")
+        change_placeholder.info(f"↔ {change:.2f}% since last refresh")
+
+show_live_price()
+time.sleep(refresh_rate)
+st.experimental_rerun()
+
+# ---------------------------
 # Timeframe Controls
+# ---------------------------
 st.subheader("Select Timeframe:")
 timeframe_options = ["5m", "1d", "1w", "1m", "1y"]
 selected_timeframe = st.radio(
     "Timeframe",
     timeframe_options,
-    index=timeframe_options.index("1y"), # Default to 1y
+    index=timeframe_options.index("1y"),  # Default to 1y
     horizontal=True,
     label_visibility="collapsed"
 )
 
 # Generate stock data based on selection (fetched directly here from yfinance)
-stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
+stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE")  # Assume NSE for graphs by default
 
-# --- Graphs Section (Stacked Vertically) ---
+# ---------------------------
+# Graphs Section (Stacked Vertically)
+# ---------------------------
 st.markdown("---")
 st.subheader(f"Price Charts for {CURRENT_STOCK}")
 
@@ -290,7 +329,7 @@ if not stock_data.empty:
     # Candlestick Chart
     st.markdown("### Candlestick Chart")
     fig_candlestick = go.Figure(data=[go.Candlestick(
-        x=stock_data.index, # Use index (Date) for x-axis
+        x=stock_data.index,  # Use index (Date) for x-axis
         open=stock_data['Open'],
         high=stock_data['High'],
         low=stock_data['Low'],
@@ -310,7 +349,7 @@ if not stock_data.empty:
     # Normal Line Graph
     st.markdown("### Normal Line Graph (Close Price)")
     fig_line = go.Figure(data=go.Scatter(
-        x=stock_data.index, # Use index (Date) for x-axis
+        x=stock_data.index,  # Use index (Date) for x-axis
         y=stock_data['Close'],
         mode='lines',
         line=dict(color='#4f46e5', width=2)
@@ -325,13 +364,14 @@ if not stock_data.empty:
 else:
     st.warning(f"No stock data available for {CURRENT_STOCK} for the selected timeframe. Check yfinance compatibility for this symbol.")
 
-
-# --- News Feed Section (fetched directly and processed) ---
+# ---------------------------
+# News Feed Section (fetched directly and processed)
+# ---------------------------
 st.markdown("---")
 st.subheader(f"Latest News for {CURRENT_STOCK}")
 
 # Fetch news and analysis directly
-raw_articles = get_financial_news_api(f"{CURRENT_STOCK} stock") # Pass query to API function
+raw_articles = get_financial_news_api(f"{CURRENT_STOCK} stock")  # Pass query to API function
 
 processed_news = []
 latest_trading_signal = {
@@ -391,15 +431,15 @@ else:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                            {news['sentiment'].upper()}
-                        </span>
-                        <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                        <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                            {news['recommended_action']}
-                        </span>
-                    </div>
-                </div>
-                """
+                    {news['sentiment'].upper()}
+                </span>
+                <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                    {news['recommended_action']}
+                </span>
+            </div>
+        </div>
+        """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
@@ -407,11 +447,13 @@ else:
             with news_col2:
                 st.markdown(news_html, unsafe_allow_html=True)
 
-# --- Trading Bot Signal Output ---
+# ---------------------------
+# Trading Bot Signal Output
+# ---------------------------
 st.markdown("---")
 st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app.")
-st.code(f"""
+st.code(f'''
 {{
     "ticker": "{latest_trading_signal['ticker']}",
     "sentiment": "{latest_trading_signal['sentiment']}",
@@ -421,4 +463,6 @@ st.code(f"""
     "stop_loss": {latest_trading_signal['stop_loss']},
     "take_profit": {latest_trading_signal['take_profit']}
 }}
-""", language='json')
+''', language='json')
+
+st.caption(f"© {datetime.now().year} | Built with ❤ using Streamlit")
