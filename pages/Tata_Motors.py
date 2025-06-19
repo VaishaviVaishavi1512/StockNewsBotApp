@@ -9,34 +9,45 @@ import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
 
 # --- Stock-Specific Configuration ---
-CURRENT_STOCK = "TATAMOTORS" # Changed to Tata Motors symbol
-# You might also want to display the full name
-CURRENT_STOCK_FULL_NAME = "Tata Motors"
+CURRENT_STOCK = "TATAMOTORS"
+CURRENT_STOCK_FULL_NAME = "Tata Motors" # Full name for display
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-               "Please add it to your Streamlit secrets or environment variables.")
+                "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
-    # Updated to include "tata motors" and common variations
-    if current_stock_symbol.lower() in text_lower or \
-       "tata motors" in text_lower or \
-       "tata group" in text_lower or \
-       "jaguar land rover" in text_lower or \
-       "jlr" in text_lower or \
-       "commercial vehicles" in text_lower or \
-       "passenger vehicles" in text_lower:
-        return current_stock_symbol
+    # Updated to check for common names/aliases for better NER for all configured stocks
+    stock_aliases = {
+        "IRCTC": ["irctc", "indian railways catering", "railways"],
+        "SBI": ["sbi", "state bank of india", "statebank"],
+        "TATAMOTORS": ["tata motors", "tata motors limited", "tata", "jlr", "jaguar land rover", "commercial vehicles", "passenger vehicles", "tata motors dvr"],
+        "BHARAT ELECTRONICS": ["bharat electronics", "bel"],
+        "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
+    }
+    
+    # Check if any alias for the current stock is in the text
+    for alias in stock_aliases.get(current_stock_symbol.upper(), []):
+        if alias in text_lower:
+            return current_stock_symbol
+    
+    # Also check for other stock symbols if they appear in news for this page
+    for stock_sym, aliases in stock_aliases.items():
+        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
+            # If another stock is mentioned, return its symbol.
+            # This is a simple NER, can be expanded with more robust models.
+            return stock_sym
+            
     return "N/A"
 
 def analyze_sentiment(text):
     positive_keywords = ["profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth", "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations", "robust", "healthy", "gains", "partnership", "collaboration", "launch", "orders", "sales", "expansion", "success", "innovative"]
-    negative_keywords = ["loss", "headwinds", "rising fuel", "supply chain issues", "missed", "resigned", "downgrade", "decline", "fall", "struggle", "uncertainty", "volatility", "challenges", "recalled", "slowdown", "competition"]
+    negative_keywords = ["loss", "headwinds", "rising fuel", "supply chain issues", "missed", "resigned", "downgrade", "decline", "fall", "struggle", "uncertainty", "volatility", "challenges", "recalled", "slowdown", "competition", "strike", "regulatory hurdle"]
     neutral_keywords = ["board approves", "plans", "announces", "decision", "discussions", "talks", "quarterly results", "updates"]
 
     score = 0
@@ -85,7 +96,7 @@ def map_news_to_action(sentiment):
 # --- Mock Data Generation (Fallback if yfinance/NewsAPI fail) ---
 def generate_mock_stock_data_local(timeframe, num_points_override=None):
     data = []
-    # Adjusted initial price range for Tata Motors
+    # Adjusted initial price range for Tata Motors, typically higher than IRCTC
     last_close = np.random.uniform(900, 1000) 
     interval_seconds = 0
     num_points = 0
@@ -116,17 +127,43 @@ def generate_mock_stock_data_local(timeframe, num_points_override=None):
 
 # --- Financial Data Integration (yfinance) ---
 def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
-    if exchange.upper() == "NSE": return f"{symbol}.NS"
-    elif exchange.upper() == "BSE": return f"{symbol}.BO"
-    return symbol
+    # Mapping for common stock names to yfinance symbols for Indian stocks
+    symbol_map = {
+        "IRCTC": "IRCTC.NS",
+        "SBI": "SBIN.NS",
+        "TATAMOTORS": "TATAMOTORS.NS", # Explicitly map Tata Motors
+        "BHARAT ELECTRONICS": "BEL.NS",
+        "INDIGO AIRLINES": "INDIGO.NS" # InterGlobe Aviation Ltd. is the parent company for Indigo
+    }
+    
+    yf_base_symbol = symbol_map.get(symbol.upper(), symbol) # Use mapped symbol if available
 
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+    if exchange.upper() == "NSE": return yf_base_symbol # .NS is typically included in the map
+    elif exchange.upper() == "BSE":   
+        # Attempt a common BSE suffix, but yfinance coverage for BSE can be less direct
+        # For example, IRCTC on BSE might be different. Let's try .BO if it's not already in symbol_map
+        if not yf_base_symbol.endswith(".NS") and not yf_base_symbol.endswith(".BO"):
+            return f"{yf_base_symbol}.BO"
+        return yf_base_symbol # If it's already a .NS or specific symbol, keep it
+    return yf_base_symbol # Fallback
+
+@st.cache_data(ttl=5 * 60) # Cache for 5 minutes (aligned with user's partial TATA_MOTORS code)
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
-        live_price = ticker.info.get('regularMarketPrice') 
+        # Use 'regularMarketPrice' for current price
+        live_price = ticker.info.get('regularMarketPrice')   
+        # Fallback to 'currentPrice' or 'dayHigh'/'dayLow' if market is closed or info incomplete
+        if live_price is None:
+            live_price = ticker.info.get('currentPrice')
+        if live_price is None:
+            # As a last resort, take the last close from recent history if nothing else works
+            hist_data = ticker.history(period="1d", interval="1m")
+            if not hist_data.empty:
+                live_price = hist_data['Close'].iloc[-1]
+
         if live_price is not None:
             print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
             return float(live_price)
@@ -242,31 +279,40 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 st.header(f"📈 Detailed Dashboard: {CURRENT_STOCK_FULL_NAME}")
 st.write(f"Comprehensive insights for {CURRENT_STOCK_FULL_NAME} on BSE/NSE.")
 
+
 # Display BSE and NSE prices (fetched directly here from yfinance)
 st.markdown("---")
 st.subheader("Current Market Prices")
 
-# Fetch both BSE and NSE prices using yfinance directly
-# Use specific symbols for BSE/NSE if known to yfinance
-# For Tata Motors, TATAMOTORS.BO for BSE and TATAMOTORS.NS for NSE are standard
-bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") 
-nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") 
+# Using st.empty() to allow for potential future granular updates if not using full page refresh
+price_placeholder = st.empty()
 
-if bse_price is not None and nse_price is not None:
-    st.markdown(f"""
-    <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+# Fetch both BSE and NSE prices using yfinance directly
+bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE")
+nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE")
+
+with price_placeholder.container():
+    if bse_price is not None and nse_price is not None:
+        st.markdown(f"""
+        <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+            </div>
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
+            </div>
         </div>
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+    
+    # Get current time for display (without pytz as per the TATA_MOTORS snippet)
+    current_time = datetime.now()
+    formatted_time = current_time.strftime('%Y-%m-%d %H:%M:%S')
+    st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {formatted_time}</p>", unsafe_allow_html=True)
+
 
 # Timeframe Controls
 st.subheader("Select Timeframe:")
@@ -331,7 +377,7 @@ st.markdown("---")
 st.subheader(f"Latest News for {CURRENT_STOCK_FULL_NAME}")
 
 # Fetch news and analysis directly
-raw_articles = get_financial_news_api(f"{CURRENT_STOCK_FULL_NAME} stock OR {CURRENT_STOCK} stock") # Pass query to API function
+raw_articles = get_financial_news_api(f"{CURRENT_STOCK_FULL_NAME} stock") # Pass query to API function
 
 processed_news = []
 latest_trading_signal = {
@@ -355,12 +401,24 @@ else:
         sentiment = analyze_sentiment(full_text)
         action_data = map_news_to_action(sentiment)
 
+        # Handle publishedAt without timezone conversion as pytz is removed
+        published_utc_str = news_item.get("publishedAt", "N/A")
+        published_display_str = "N/A"
+        if published_utc_str != "N/A":
+            try:
+                # Parse the UTC timestamp provided by NewsAPI (e.g., "2023-10-27T10:00:00Z")
+                # and format directly without timezone conversion
+                published_datetime = datetime.strptime(published_utc_str, '%Y-%m-%dT%H:%M:%SZ')
+                published_display_str = published_datetime.strftime('%Y-%m-%d %H:%M:%S UTC')
+            except ValueError:
+                published_display_str = f"Invalid Date Format: {published_utc_str}"
+
         processed_news_item = {
             "source": news_item["source"],
             "title": news_item["title"],
             "content": news_item["content"],
             "url": news_item["url"],
-            "publishedAt": news_item["publishedAt"],
+            "publishedAt": published_display_str, # Use formatted string here
             "sentiment": sentiment,
             "event": news_item["event"],
             "recommended_action": action_data["recommended_action"],
@@ -373,7 +431,7 @@ else:
             latest_trading_signal = {
                 "ticker": ticker_identified,
                 "sentiment": sentiment,
-                "event": news_item["event"],
+                "event": news_item["event"], # Original event might be more general
                 "confidence": action_data["confidence"],
                 "recommended_action": action_data["recommended_action"],
                 "stop_loss": action_data["stop_loss"],
@@ -384,7 +442,7 @@ else:
     for i, news in enumerate(processed_news):
         news_html = f"""
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt'][:10]}</p>
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>   
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>
