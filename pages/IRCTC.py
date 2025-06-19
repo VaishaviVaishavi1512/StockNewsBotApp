@@ -466,7 +466,7 @@ else:
     for i, news in enumerate(processed_news):
         news_html = f"""
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p> {/* Use updated 'publishedAt' */}
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p> 
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>

@@ -5,3 +5,4 @@ plotly
 requests
 yfinance
 streamlit-autorefresh
+pytz
