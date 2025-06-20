@@ -8,3 +8,4 @@ streamlit-autorefresh
 pytz
 ta
 pandas_ta
+setuptools # Add this line
