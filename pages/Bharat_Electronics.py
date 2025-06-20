@@ -338,13 +338,13 @@ stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # 
 # Generate technical signals
 technical_signals = generate_technical_signals(stock_data)  # Ensure this line is present
 
-if technical_signals:
+if isinstance(technical_signals, dict) and technical_signals:
     st.markdown("### 📊 Technical Indicators")
     for signal_name, signal_value in technical_signals.items():
         st.write(f"**{signal_name}**: {signal_value}")
 else:
-    st.warning("⚠️ Technical indicators could not be generated.")
-
+    st.warning("⚠️ Technical indicators could not be generated or are not in correct format.")
+    st.text(f"Returned type: {type(technical_signals)} | Value: {technical_signals}")
 
 
 # --- Graphs Section (Stacked Vertically) ---
