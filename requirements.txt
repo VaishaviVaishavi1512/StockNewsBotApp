@@ -6,3 +6,4 @@ requests
 yfinance
 streamlit-autorefresh
 pytz
+ta

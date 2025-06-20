@@ -9,6 +9,8 @@ import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
 import pytz # NEW: Import pytz for timezone handling
 
+from utils.strategy_engine import generate_technical_signals
+
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
 
@@ -333,6 +335,8 @@ selected_timeframe = st.radio(
 
 # Generate stock data based on selection (fetched directly here from yfinance)
 stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
+technical_signal = generate_technical_signals(stock_data)
+
 
 # --- Graphs Section (Stacked Vertically) ---
 st.markdown("---")
@@ -490,5 +494,7 @@ st.code(f"""
     "recommended_action": "{latest_trading_signal['recommended_action']}",
     "stop_loss": {latest_trading_signal['stop_loss']},
     "take_profit": {latest_trading_signal['take_profit']}
+    "technical_indicator": "{technical_signal}"
+
 }}
 """, language='json')
