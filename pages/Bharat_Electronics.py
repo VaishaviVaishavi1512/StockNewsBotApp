@@ -340,8 +340,11 @@ technical_signals = generate_technical_signals(stock_data)
 
 # Display signals
 st.markdown("### 🧠 Technical Indicators")
-for signal_name, signal_value in technical_signals.items():
-    st.markdown(f"- **{signal_name}:** {signal_value}")
+if technical_signals:
+    for signal_name, signal_value in technical_signals.items():
+        st.write(f"{signal_name}: {signal_value}")
+else:
+    st.warning("No technical signals were generated.")
 
 
 # --- Graphs Section (Stacked Vertically) ---
