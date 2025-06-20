@@ -7,3 +7,4 @@ yfinance
 streamlit-autorefresh
 pytz
 ta
+pandas_ta
