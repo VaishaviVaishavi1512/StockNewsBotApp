@@ -339,7 +339,7 @@ stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # 
 technical_signals = generate_technical_signals(stock_data)
 
 if technical_signals and isinstance(technical_signals, dict):
-    st.markdown("### 📊 Technical Indicators")
+    st.markdown("### 🚨 TESTING TECHNICAL INDICATORS")
     for signal_name, signal_value in technical_signals.items():
         st.write(f"**{signal_name}**: {signal_value}")
 else:
