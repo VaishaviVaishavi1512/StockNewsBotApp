@@ -336,15 +336,15 @@ selected_timeframe = st.radio(
 # Generate stock data based on selection (fetched directly here from yfinance)
 stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
 # Generate technical signals
-technical_signals = generate_technical_signals(stock_data)  # Ensure this line is present
+technical_signals = generate_technical_signals(stock_data)
 
-if isinstance(technical_signals, dict) and technical_signals:
+if technical_signals and isinstance(technical_signals, dict):
     st.markdown("### 📊 Technical Indicators")
     for signal_name, signal_value in technical_signals.items():
         st.write(f"**{signal_name}**: {signal_value}")
 else:
-    st.warning("⚠️ Technical indicators could not be generated or are not in correct format.")
-    st.text(f"Returned type: {type(technical_signals)} | Value: {technical_signals}")
+    st.warning("⚠️ Technical indicators could not be generated or are not in dictionary format.")
+
 
 
 # --- Graphs Section (Stacked Vertically) ---
