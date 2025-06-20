@@ -369,11 +369,18 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
         technical_signals["reasons"].append(f"RSI ({rsi:.2f}): Neutral")
 
     # --- MACD ---
-# --- NEW: Add MACD Chart ---
+## --- NEW: Add MACD Chart ---
     st.markdown("### Moving Average Convergence Divergence (MACD)")
     df_plot_macd = stock_data.copy()
+
+    # Debugging: Print the length of the DataFrame before MACD calculation
+    print(f"DEBUG: df_plot_macd length BEFORE MACD calculation: {len(df_plot_macd)}")
+
     # Calculate MACD. Ensure this line runs and successfully adds the columns.
     df_plot_macd.ta.macd(append=True)
+
+    # Debugging: Print all columns of the DataFrame AFTER MACD calculation
+    print(f"DEBUG: df_plot_macd columns AFTER MACD calculation: {df_plot_macd.columns.tolist()}")
 
     # Check if MACD columns exist before attempting to plot
     macd_line_col = 'MACD_12_26_9'
@@ -395,9 +402,8 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
         st.plotly_chart(fig_macd, use_container_width=True)
     else:
         st.info("Not enough data or MACD calculation failed. Cannot plot MACD. (Requires at least 26 data points)")
-        # You might want to print to console or log more details about why it failed
-        # print(f"DEBUG: df_plot_macd columns: {df_plot_macd.columns.tolist()}")
-        # print(f"DEBUG: df_plot_macd length: {len(df_plot_macd)}")
+        # More explicit debugging output for the user
+        st.error(f"MACD calculation failed. Dataframe length: {len(df_plot_macd)}. Available columns: {df_plot_macd.columns.tolist()}")
 
 
     # --- Bollinger Bands ---
