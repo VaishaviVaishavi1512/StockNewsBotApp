@@ -369,20 +369,35 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
         technical_signals["reasons"].append(f"RSI ({rsi:.2f}): Neutral")
 
     # --- MACD ---
-    # MACD line, Signal line, Histogram
-    macd_line = df['MACD_12_26_9'].iloc[-1]
-    macd_signal = df['MACDS_12_26_9'].iloc[-1]
-    macd_hist = df['MACDH_12_26_9'].iloc[-1] # Histogram
+# --- NEW: Add MACD Chart ---
+    st.markdown("### Moving Average Convergence Divergence (MACD)")
+    df_plot_macd = stock_data.copy()
+    # Calculate MACD. Ensure this line runs and successfully adds the columns.
+    df_plot_macd.ta.macd(append=True)
 
-    if macd_line > macd_signal and macd_hist > 0: # MACD line crosses above signal line AND histogram is positive (strong buy)
-        technical_signals["buy_signals"] += 1
-        technical_signals["reasons"].append("MACD: Bullish Crossover")
-    elif macd_line < macd_signal and macd_hist < 0: # MACD line crosses below signal line AND histogram is negative (strong sell)
-        technical_signals["sell_signals"] += 1
-        technical_signals["reasons"].append("MACD: Bearish Crossover")
+    # Check if MACD columns exist before attempting to plot
+    macd_line_col = 'MACD_12_26_9'
+    signal_line_col = 'MACDS_12_26_9'
+    histogram_col = 'MACDH_12_26_9'
+
+    if all(col in df_plot_macd.columns for col in [macd_line_col, signal_line_col, histogram_col]):
+        fig_macd = go.Figure()
+        fig_macd.add_trace(go.Scatter(x=df_plot_macd.index, y=df_plot_macd[macd_line_col], mode='lines', name='MACD Line', line=dict(color='blue')))
+        fig_macd.add_trace(go.Scatter(x=df_plot_macd.index, y=df_plot_macd[signal_line_col], mode='lines', name='Signal Line', line=dict(color='orange')))
+        fig_macd.add_trace(go.Bar(x=df_plot_macd.index, y=df_plot_macd[histogram_col], name='Histogram', marker_color=['green' if val >= 0 else 'red' for val in df_plot_macd[histogram_col]]))
+        fig_macd.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Value",
+            height=300,
+            margin=dict(l=20, r=20, t=20, b=20),
+            legend=dict(x=0, y=0.99, xanchor='left', yanchor='top')
+        )
+        st.plotly_chart(fig_macd, use_container_width=True)
     else:
-        technical_signals["neutral_signals"] += 1
-        technical_signals["reasons"].append("MACD: Neutral")
+        st.info("Not enough data or MACD calculation failed. Cannot plot MACD. (Requires at least 26 data points)")
+        # You might want to print to console or log more details about why it failed
+        # print(f"DEBUG: df_plot_macd columns: {df_plot_macd.columns.tolist()}")
+        # print(f"DEBUG: df_plot_macd length: {len(df_plot_macd)}")
 
 
     # --- Bollinger Bands ---
