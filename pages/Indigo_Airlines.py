@@ -369,7 +369,7 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
         technical_signals["reasons"].append(f"RSI ({rsi:.2f}): Neutral")
 
     # --- MACD ---
-## --- NEW: Add MACD Chart ---
+# --- NEW: Add MACD Chart ---
     st.markdown("### Moving Average Convergence Divergence (MACD)")
     df_plot_macd = stock_data.copy()
 
@@ -387,6 +387,7 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
     signal_line_col = 'MACDS_12_26_9'
     histogram_col = 'MACDH_12_26_9'
 
+    # THIS IS THE CRITICAL CHANGE YOU NEED TO HAVE IN YOUR FILE
     if all(col in df_plot_macd.columns for col in [macd_line_col, signal_line_col, histogram_col]):
         fig_macd = go.Figure()
         fig_macd.add_trace(go.Scatter(x=df_plot_macd.index, y=df_plot_macd[macd_line_col], mode='lines', name='MACD Line', line=dict(color='blue')))
@@ -402,9 +403,7 @@ def generate_trading_signal(stock_data: pd.DataFrame, news_sentiment: str):
         st.plotly_chart(fig_macd, use_container_width=True)
     else:
         st.info("Not enough data or MACD calculation failed. Cannot plot MACD. (Requires at least 26 data points)")
-        # More explicit debugging output for the user
         st.error(f"MACD calculation failed. Dataframe length: {len(df_plot_macd)}. Available columns: {df_plot_macd.columns.tolist()}")
-
 
     # --- Bollinger Bands ---
     bb_upper = df['BBL_20_2.0'].iloc[-1]
