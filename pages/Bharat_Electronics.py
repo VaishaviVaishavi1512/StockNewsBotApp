@@ -335,7 +335,13 @@ selected_timeframe = st.radio(
 
 # Generate stock data based on selection (fetched directly here from yfinance)
 stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
-technical_signal = generate_technical_signals(stock_data)
+# Generate technical signals
+technical_signals = generate_technical_signals(stock_data)
+
+# Display signals
+st.markdown("### 🧠 Technical Indicators")
+for signal_name, signal_value in technical_signals.items():
+    st.markdown(f"- **{signal_name}:** {signal_value}")
 
 
 # --- Graphs Section (Stacked Vertically) ---
@@ -485,6 +491,7 @@ else:
 st.markdown("---")
 st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app.")
+technical_signal = latest_trading_signal.get("technical_signal", "Not available")
 st.code(f"""
 {{
     "ticker": "{latest_trading_signal['ticker']}",
