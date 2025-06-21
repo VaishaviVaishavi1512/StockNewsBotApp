@@ -9,8 +9,6 @@ import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
 import pytz # NEW: Import pytz for timezone handling
 
-from utils.strategy_engine import generate_technical_signals
-
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
 
@@ -335,17 +333,6 @@ selected_timeframe = st.radio(
 
 # Generate stock data based on selection (fetched directly here from yfinance)
 stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
-# Generate technical signals
-technical_signals = generate_technical_signals(stock_data)
-
-if technical_signals and isinstance(technical_signals, dict):
-    st.markdown("### 🚨 TESTING TECHNICAL INDICATORS")
-    for signal_name, signal_value in technical_signals.items():
-        st.write(f"**{signal_name}**: {signal_value}")
-else:
-    st.warning("⚠️ Technical indicators could not be generated or are not in dictionary format.")
-
-
 
 # --- Graphs Section (Stacked Vertically) ---
 st.markdown("---")
@@ -600,7 +587,6 @@ st.markdown("""
 st.markdown("---")
 st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app.")
-technical_signal = latest_trading_signal.get("technical_signal", "Not available")
 st.code(f"""
 {{
     "ticker": "{latest_trading_signal['ticker']}",
@@ -610,7 +596,5 @@ st.code(f"""
     "recommended_action": "{latest_trading_signal['recommended_action']}",
     "stop_loss": {latest_trading_signal['stop_loss']},
     "take_profit": {latest_trading_signal['take_profit']}
-    "technical_indicator": "{technical_signal}"
-
 }}
 """, language='json')
