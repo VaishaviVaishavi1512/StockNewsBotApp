@@ -7,37 +7,127 @@ from datetime import datetime, timedelta
 import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
+import yfinance as yf
+import pandas as pd
+latest_trading_signal = {
+    "sentiment": "Neutral",
+    "confidence": "0.75",
+    "recommended_action": "HOLD"
+}
 
-# Strategy Signal Engine - START
-def compute_strategy_signals(df):
-    if df.empty:
-        return {
-            "ema_signal": "N/A",
-            "volatility": "N/A",
-            "ema20": 0.0,
-            "ema50": 0.0,
-            "std_dev": 0.0
-        }
 
-    ema20 = df['Close'].ewm(span=20).mean()
-    ema50 = df['Close'].ewm(span=50).mean()
-    volatility = df['Close'].pct_change().std()
+# Get historical data for IRCTC
+ticker = yf.Ticker("IRCTC.NS")
+stock_data = ticker.history(period="3mo", interval="1d")
 
-    if ema20.iloc[-1] > ema50.iloc[-1]:
-        ema_signal = "BUY"
-    elif ema20.iloc[-1] < ema50.iloc[-1]:
-        ema_signal = "SELL"
-    else:
-        ema_signal = "HOLD"
 
-    return {
-        "ema_signal": ema_signal,
-        "volatility": "HIGH RISK" if volatility > 0.02 else "STABLE",
-        "ema20": round(ema20.iloc[-1], 2),
-        "ema50": round(ema50.iloc[-1], 2),
-        "std_dev": round(volatility, 4)
-    }
-# Strategy Signal Engine - END
+# --- Strategy Decision Engine ---
+st.markdown("---")
+st.markdown("## 🧠 Strategy Decision Engine")
+
+import ta
+
+# Ensure stock_data has no NaNs and is sorted
+strategy_data = stock_data.copy().dropna()
+strategy_data.sort_index(inplace=True)
+
+signals_summary = []  # Store individual strategy results
+
+# --- 1. EMA Crossover ---
+ema20 = ta.trend.ema_indicator(strategy_data['Close'], window=20).fillna(0)
+ema50 = ta.trend.ema_indicator(strategy_data['Close'], window=50).fillna(0)
+ema_signal = "BUY" if ema20.iloc[-1] > ema50.iloc[-1] else "SELL"
+signals_summary.append(ema_signal)
+
+with st.container():
+    st.markdown("""
+    <div style='background-color: #ecfdf5; padding: 1rem; border-radius: 0.5rem;'>
+        <h4>📊 <strong>EMA Strategy Signal</strong></h4>
+        <p><strong>20 EMA:</strong> ₹{:.2f} | <strong>50 EMA:</strong> ₹{:.2f}</p>
+        <p><strong>Signal:</strong> {}</p>
+    </div>
+    """.format(ema20.iloc[-1], ema50.iloc[-1], ema_signal), unsafe_allow_html=True)
+
+# --- 2. SMA Crossover ---
+sma20 = ta.trend.sma_indicator(strategy_data['Close'], window=20).fillna(0)
+sma50 = ta.trend.sma_indicator(strategy_data['Close'], window=50).fillna(0)
+sma_signal = "BUY" if sma20.iloc[-1] > sma50.iloc[-1] else "SELL"
+signals_summary.append(sma_signal)
+
+st.markdown("""
+<div style='background-color: #f0fdf4; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📊 <strong>SMA Strategy Signal</strong></h4>
+    <p><strong>20 SMA:</strong> ₹{:.2f} | <strong>50 SMA:</strong> ₹{:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(sma20.iloc[-1], sma50.iloc[-1], sma_signal), unsafe_allow_html=True)
+
+# --- 3. RSI Strategy ---
+rsi = ta.momentum.RSIIndicator(strategy_data['Close'], window=14).rsi().fillna(50)
+rsi_signal = "BUY" if rsi.iloc[-1] < 30 else ("SELL" if rsi.iloc[-1] > 70 else "HOLD")
+signals_summary.append(rsi_signal)
+
+st.markdown("""
+<div style='background-color: #fefce8; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📉 <strong>RSI Signal</strong></h4>
+    <p><strong>RSI:</strong> {:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(rsi.iloc[-1], rsi_signal), unsafe_allow_html=True)
+
+# --- 4. MACD ---
+macd_line = ta.trend.macd_diff(strategy_data['Close']).fillna(0)
+macd_signal = "BUY" if macd_line.iloc[-1] > 0 else "SELL"
+signals_summary.append(macd_signal)
+
+st.markdown("""
+<div style='background-color: #f0f9ff; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📈 <strong>MACD Signal</strong></h4>
+    <p><strong>MACD:</strong> {:.4f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(macd_line.iloc[-1], macd_signal), unsafe_allow_html=True)
+
+# --- 5. Bollinger Bands ---
+bbands = ta.volatility.BollingerBands(strategy_data['Close'], window=20)
+bb_lower = bbands.bollinger_lband().iloc[-1]
+bb_upper = bbands.bollinger_hband().iloc[-1]
+bb_signal = "BUY" if strategy_data['Close'].iloc[-1] < bb_lower else ("SELL" if strategy_data['Close'].iloc[-1] > bb_upper else "HOLD")
+signals_summary.append(bb_signal)
+
+st.markdown("""
+<div style='background-color: #fff7ed; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📊 <strong>Bollinger Bands</strong></h4>
+    <p><strong>Close:</strong> ₹{:.2f} | <strong>Lower Band:</strong> ₹{:.2f} | <strong>Upper Band:</strong> ₹{:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(strategy_data['Close'].iloc[-1], bb_lower, bb_upper, bb_signal), unsafe_allow_html=True)
+
+# --- 6. News-Based Strategy ---
+news_sentiment_signal = latest_trading_signal.get("recommended_action", "HOLD")
+signals_summary.append(news_sentiment_signal)
+
+st.markdown("""
+<div style='background-color: #ede9fe; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📰 <strong>News-Based Sentiment Signal</strong></h4>
+    <p><strong>Sentiment:</strong> {} | <strong>Confidence:</strong> {}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(latest_trading_signal['sentiment'], latest_trading_signal['confidence'], news_sentiment_signal), unsafe_allow_html=True)
+
+# --- Final Aggregated Decision ---
+from collections import Counter
+vote_count = Counter(signals_summary)
+final_signal = vote_count.most_common(1)[0][0]
+
+st.markdown("""
+<div style='background-color: #dcfce7; padding: 1rem; border-radius: 0.5rem; margin-top: 1rem;'>
+    <h3>🧾 <strong>Final Trading Decision</strong></h3>
+    <p><strong>Signals Summary:</strong> {}</p>
+    <p><strong>Majority Vote:</strong> <span style='color: #065f46; font-weight: bold;'>{}</span></p>
+</div>
+""".format(signals_summary, final_signal), unsafe_allow_html=True)
+
 
 
 # --- NEW: Import streamlit_autorefresh for live updates ---
@@ -514,23 +604,3 @@ st.code(f"""
     "take_profit": {latest_trading_signal['take_profit']}
 }}
 """, language='json')
-# --- Strategy Decision Engine ---
-st.markdown("---")
-st.subheader("🧠 Strategy Decision Engine")
-strategy_result = compute_strategy_signals(stock_data)
-
-if strategy_result['ema_signal'] != "N/A":
-    st.markdown(f"""
-    <div style="background-color: #ecfdf5; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
-        <h4 style="margin: 0 0 0.5rem 0;">📊 EMA Strategy Signal</h4>
-        <b>20 EMA:</b> ₹{strategy_result['ema20']} | <b>50 EMA:</b> ₹{strategy_result['ema50']}<br>
-        <b>Signal:</b> {strategy_result['ema_signal']}
-    </div>
-    <div style="background-color: #fff7ed; padding: 1rem; border-radius: 0.5rem;">
-        <h4 style="margin: 0 0 0.5rem 0;">⚠️ Volatility</h4>
-        <b>Std Dev:</b> {strategy_result['std_dev']}<br>
-        <b>Condition:</b> {strategy_result['volatility']}
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.info("Strategy decision engine requires valid price data.")
