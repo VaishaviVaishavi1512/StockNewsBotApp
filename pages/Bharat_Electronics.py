@@ -489,6 +489,112 @@ else:
         else:
             with news_col2:
                 st.markdown(news_html, unsafe_allow_html=True)
+# --- Strategy Decision Engine ---
+st.markdown("---")
+st.markdown("## 🧠 Strategy Decision Engine")
+
+import ta
+
+# Ensure stock_data has no NaNs and is sorted
+strategy_data = stock_data.copy().dropna()
+strategy_data.sort_index(inplace=True)
+
+signals_summary = []  # Store individual strategy results
+
+# --- 1. EMA Crossover ---
+ema20 = ta.trend.ema_indicator(strategy_data['Close'], window=20).fillna(0)
+ema50 = ta.trend.ema_indicator(strategy_data['Close'], window=50).fillna(0)
+ema_signal = "BUY" if ema20.iloc[-1] > ema50.iloc[-1] else "SELL"
+signals_summary.append(ema_signal)
+
+with st.container():
+    st.markdown("""
+    <div style='background-color: #ecfdf5; padding: 1rem; border-radius: 0.5rem;'>
+        <h4>📊 <strong>EMA Strategy Signal</strong></h4>
+        <p><strong>20 EMA:</strong> ₹{:.2f} | <strong>50 EMA:</strong> ₹{:.2f}</p>
+        <p><strong>Signal:</strong> {}</p>
+    </div>
+    """.format(ema20.iloc[-1], ema50.iloc[-1], ema_signal), unsafe_allow_html=True)
+
+# --- 2. SMA Crossover ---
+sma20 = ta.trend.sma_indicator(strategy_data['Close'], window=20).fillna(0)
+sma50 = ta.trend.sma_indicator(strategy_data['Close'], window=50).fillna(0)
+sma_signal = "BUY" if sma20.iloc[-1] > sma50.iloc[-1] else "SELL"
+signals_summary.append(sma_signal)
+
+st.markdown("""
+<div style='background-color: #f0fdf4; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📊 <strong>SMA Strategy Signal</strong></h4>
+    <p><strong>20 SMA:</strong> ₹{:.2f} | <strong>50 SMA:</strong> ₹{:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(sma20.iloc[-1], sma50.iloc[-1], sma_signal), unsafe_allow_html=True)
+
+# --- 3. RSI Strategy ---
+rsi = ta.momentum.RSIIndicator(strategy_data['Close'], window=14).rsi().fillna(50)
+rsi_signal = "BUY" if rsi.iloc[-1] < 30 else ("SELL" if rsi.iloc[-1] > 70 else "HOLD")
+signals_summary.append(rsi_signal)
+
+st.markdown("""
+<div style='background-color: #fefce8; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📉 <strong>RSI Signal</strong></h4>
+    <p><strong>RSI:</strong> {:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(rsi.iloc[-1], rsi_signal), unsafe_allow_html=True)
+
+# --- 4. MACD ---
+macd_line = ta.trend.macd_diff(strategy_data['Close']).fillna(0)
+macd_signal = "BUY" if macd_line.iloc[-1] > 0 else "SELL"
+signals_summary.append(macd_signal)
+
+st.markdown("""
+<div style='background-color: #f0f9ff; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📈 <strong>MACD Signal</strong></h4>
+    <p><strong>MACD:</strong> {:.4f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(macd_line.iloc[-1], macd_signal), unsafe_allow_html=True)
+
+# --- 5. Bollinger Bands ---
+bbands = ta.volatility.BollingerBands(strategy_data['Close'], window=20)
+bb_lower = bbands.bollinger_lband().iloc[-1]
+bb_upper = bbands.bollinger_hband().iloc[-1]
+bb_signal = "BUY" if strategy_data['Close'].iloc[-1] < bb_lower else ("SELL" if strategy_data['Close'].iloc[-1] > bb_upper else "HOLD")
+signals_summary.append(bb_signal)
+
+st.markdown("""
+<div style='background-color: #fff7ed; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📊 <strong>Bollinger Bands</strong></h4>
+    <p><strong>Close:</strong> ₹{:.2f} | <strong>Lower Band:</strong> ₹{:.2f} | <strong>Upper Band:</strong> ₹{:.2f}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(strategy_data['Close'].iloc[-1], bb_lower, bb_upper, bb_signal), unsafe_allow_html=True)
+
+# --- 6. News-Based Strategy ---
+news_sentiment_signal = latest_trading_signal.get("recommended_action", "HOLD")
+signals_summary.append(news_sentiment_signal)
+
+st.markdown("""
+<div style='background-color: #ede9fe; padding: 1rem; border-radius: 0.5rem;'>
+    <h4>📰 <strong>News-Based Sentiment Signal</strong></h4>
+    <p><strong>Sentiment:</strong> {} | <strong>Confidence:</strong> {}</p>
+    <p><strong>Signal:</strong> {}</p>
+</div>
+""".format(latest_trading_signal['sentiment'], latest_trading_signal['confidence'], news_sentiment_signal), unsafe_allow_html=True)
+
+# --- Final Aggregated Decision ---
+from collections import Counter
+vote_count = Counter(signals_summary)
+final_signal = vote_count.most_common(1)[0][0]
+
+st.markdown("""
+<div style='background-color: #dcfce7; padding: 1rem; border-radius: 0.5rem; margin-top: 1rem;'>
+    <h3>🧾 <strong>Final Trading Decision</strong></h3>
+    <p><strong>Signals Summary:</strong> {}</p>
+    <p><strong>Majority Vote:</strong> <span style='color: #065f46; font-weight: bold;'>{}</span></p>
+</div>
+""".format(signals_summary, final_signal), unsafe_allow_html=True)
 
 # --- Trading Bot Signal Output ---
 st.markdown("---")
