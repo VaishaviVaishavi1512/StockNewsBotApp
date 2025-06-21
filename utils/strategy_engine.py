@@ -1,55 +1,59 @@
-import pandas as pd
 import numpy as np
-import ta
 
-def generate_technical_signals(df):
+def decide_strategy(data):
+    """
+    data: dict with keys:
+      - 'price', 'volume', 'rsi', 'ema50', 'ema200', 'high20', 'sentiment' (score -1 to 1)
+    """
+    strategy = ""
     signal = "HOLD"
+    confidence = 0.5
+    reasons = []
 
-    # Calculate indicators
-    df['EMA20'] = ta.trend.EMAIndicator(df['Close'], window=20).ema_indicator()
-    df['EMA50'] = ta.trend.EMAIndicator(df['Close'], window=50).ema_indicator()
-    df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
-
-    macd = ta.trend.MACD(df['Close'])
-    df['MACD'] = macd.macd()
-    df['MACD_signal'] = macd.macd_signal()
-
-    bb = ta.volatility.BollingerBands(df['Close'])
-    df['bb_upper'] = bb.bollinger_hband()
-    df['bb_lower'] = bb.bollinger_lband()
-
-    latest = df.iloc[-1]
-    buy_signals = 0
-    sell_signals = 0
-
-    # EMA Crossover
-    if latest['EMA20'] > latest['EMA50']:
-        buy_signals += 1
-    elif latest['EMA20'] < latest['EMA50']:
-        sell_signals += 1
-
-    # RSI
-    if latest['RSI'] < 30:
-        buy_signals += 1
-    elif latest['RSI'] > 70:
-        sell_signals += 1
-
-    # MACD
-    if latest['MACD'] > latest['MACD_signal']:
-        buy_signals += 1
-    elif latest['MACD'] < latest['MACD_signal']:
-        sell_signals += 1
-
-    # Bollinger Band
-    if latest['Close'] < latest['bb_lower']:
-        buy_signals += 1
-    elif latest['Close'] > latest['bb_upper']:
-        sell_signals += 1
-
-    # Final Decision
-    if buy_signals >= 2:
+    # Strategy 1: Mean Reversion
+    if data['rsi'] < 30:
+        strategy = "Mean Reversion"
         signal = "BUY"
-    elif sell_signals >= 2:
+        confidence = 0.75
+        reasons.append(f"RSI is very low ({data['rsi']}) → Oversold")
+    elif data['rsi'] > 70:
+        strategy = "Mean Reversion"
         signal = "SELL"
+        confidence = 0.75
+        reasons.append(f"RSI is high ({data['rsi']}) → Overbought")
 
-    return signal
+    # Strategy 2: Trend Following
+    elif data['ema50'] > data['ema200']:
+        strategy = "Trend Following"
+        signal = "BUY"
+        confidence = 0.7
+        reasons.append("50 EMA > 200 EMA → Bullish trend")
+    elif data['ema50'] < data['ema200']:
+        strategy = "Trend Following"
+        signal = "SELL"
+        confidence = 0.7
+        reasons.append("50 EMA < 200 EMA → Bearish trend")
+
+    # Strategy 3: Breakout
+    if data['price'] > data['high20'] and data['volume'] > data['avg_volume'] * 1.5:
+        strategy = "Breakout"
+        signal = "BUY"
+        confidence = 0.8
+        reasons.append("Breakout above 20-day high with high volume")
+
+    # Strategy 4: Sentiment Based
+    if data['sentiment'] > 0.5:
+        signal = "BUY"
+        confidence = max(confidence, 0.8)
+        reasons.append("Very positive news sentiment")
+    elif data['sentiment'] < -0.5:
+        signal = "SELL"
+        confidence = max(confidence, 0.8)
+        reasons.append("Very negative news sentiment")
+
+    return {
+        "strategy": strategy or "Neutral",
+        "signal": signal,
+        "confidence": round(confidence, 2),
+        "reasons": reasons
+    }
