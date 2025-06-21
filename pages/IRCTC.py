@@ -8,32 +8,43 @@ import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
 
+# --- NEW: Import streamlit_autorefresh for live updates ---
+from streamlit_autorefresh import st_autorefresh
+
 # --- Stock-Specific Configuration ---
 CURRENT_STOCK = "IRCTC"
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
-# On Streamlit Cloud, you configure these as "secrets".
-# Locally, you might use os.getenv for testing if you set system environment variables.
-# st.secrets is the preferred way for Streamlit Cloud deployment.
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-               "Please add it to your Streamlit secrets or environment variables.")
+                "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
-# These functions were previously in backend_app.py
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
-    if current_stock_symbol.lower() in text_lower or \
-       "indian railways catering" in text_lower or \
-       "state bank of india" in text_lower or \
-       "tata motors" in text_lower or \
-       "bharat electronics" in text_lower or \
-       "indigo airlines" in text_lower or \
-       "bel" in text_lower or \
-       "sbi" in text_lower:
-        return current_stock_symbol
+    # Updated to check for common names/aliases for better NER
+    stock_aliases = {
+        "IRCTC": ["irctc", "indian railways catering", "railways"],
+        "SBI": ["sbi", "state bank of india"],
+        "TATA MOTORS": ["tata motors", "tata"],
+        "BHARAT ELECTRONICS": ["bharat electronics", "bel"],
+        "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
+    }
+    
+    # Check if any alias for the current stock is in the text
+    for alias in stock_aliases.get(current_stock_symbol.upper(), []):
+        if alias in text_lower:
+            return current_stock_symbol
+    
+    # Also check for other stock symbols if they appear in news for this page
+    for stock_sym, aliases in stock_aliases.items():
+        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
+            # If another stock is mentioned, return its symbol.
+            # This is a simple NER, can be expanded with more robust models.
+            return stock_sym
+            
     return "N/A"
 
 def analyze_sentiment(text):
@@ -117,17 +128,44 @@ def generate_mock_stock_data_local(timeframe, num_points_override=None):
 
 # --- Financial Data Integration (yfinance) ---
 def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
-    if exchange.upper() == "NSE": return f"{symbol}.NS"
-    elif exchange.upper() == "BSE": return f"{symbol}.BO"
-    return symbol
+    # Mapping for common stock names to yfinance symbols for Indian stocks
+    symbol_map = {
+        "IRCTC": "IRCTC.NS",
+        "SBI": "SBIN.NS",
+        "TATA MOTORS": "TATAMOTORS.NS",
+        "BHARAT ELECTRONICS": "BEL.NS",
+        "INDIGO AIRLINES": "INDIGO.NS" # InterGlobe Aviation Ltd. is the parent company for Indigo
+    }
+    
+    yf_base_symbol = symbol_map.get(symbol.upper(), symbol) # Use mapped symbol if available
 
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+    if exchange.upper() == "NSE": return f"{yf_base_symbol}" # .NS is typically included in the map
+    elif exchange.upper() == "BSE": 
+        # Attempt a common BSE suffix, but yfinance coverage for BSE can be less direct
+        # For example, IRCTC on BSE might be different. Let's try .BO if it's not already in symbol_map
+        if not yf_base_symbol.endswith(".NS") and not yf_base_symbol.endswith(".BO"):
+            return f"{yf_base_symbol}.BO"
+        return yf_base_symbol # If it's already a .NS or specific symbol, keep it
+    return yf_base_symbol # Fallback
+
+@st.cache_data(ttl=30) # Cache for 30 seconds for "live" price. St_autorefresh will trigger.
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
+        # Use 'regularMarketPrice' for current price
         live_price = ticker.info.get('regularMarketPrice') 
+        # Fallback to 'currentPrice' or 'dayHigh'/'dayLow' if market is closed or info incomplete
+        if live_price is None:
+            live_price = ticker.info.get('currentPrice')
+        if live_price is None:
+            # As a last resort, take the last close from recent history if nothing else works
+            hist_data = ticker.history(period="1d", interval="1m")
+            if not hist_data.empty:
+                live_price = hist_data['Close'].iloc[-1]
+
+
         if live_price is not None:
             print(f"yfinance: Successfully fetched live price for {yf_symbol}: {live_price}")
             return float(live_price)
@@ -188,6 +226,15 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         "pageSize": 20
     }
     
+    # --- IMPORTANT NOTE ON NEWS SOURCES ---
+    # NewsAPI.org does not have distinct, reliable source IDs for Moneycontrol or Economic Times
+    # that allow exclusive filtering. Articles from these sources might appear based on the 'q'
+    # parameter if they are indexed by NewsAPI.org. For guaranteed exclusive content from
+    # Moneycontrol and Economic Times, direct web scraping would be required, which is beyond
+    # the scope of the current request due to "no new code" constraint and scraping complexities.
+    # We will proceed with the general query to NewsAPI.org.
+    # You might find articles from various Indian sources including potentially Moneycontrol/Economic Times.
+    
     print(f"Attempting NewsAPI.org for query: '{query}'")
     try:
         response = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
@@ -243,30 +290,43 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 st.header(f"📈 Detailed Dashboard: {CURRENT_STOCK}")
 st.write(f"Comprehensive insights for {CURRENT_STOCK} on BSE/NSE.")
 
+# --- NEW: Auto-refresh the page every 30 seconds for live updates ---
+# This will cause the entire script to re-run, fetching fresh prices/news if caches expire.
+st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}") 
+
+
 # Display BSE and NSE prices (fetched directly here from yfinance)
 st.markdown("---")
 st.subheader("Current Market Prices")
 
+# Using st.empty() to allow for potential future granular updates if not using full page refresh
+# For now, with st_autorefresh, the whole block re-renders anyway.
+price_placeholder = st.empty()
+
 # Fetch both BSE and NSE prices using yfinance directly
-# Use specific symbols for BSE/NSE if known to yfinance
 bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: IRCTC.BO for BSE
 nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: IRCTC.NS for NSE
 
-if bse_price is not None and nse_price is not None:
-    st.markdown(f"""
-    <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+with price_placeholder.container():
+    if bse_price is not None and nse_price is not None:
+        st.markdown(f"""
+        <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #4CAF50;">BSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{bse_price:.2f}</span>
+            </div>
+            <div style="text-align: center;">
+                <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
+                <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
+            </div>
         </div>
-        <div style="text-align: center;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: #2196F3;">NSE:</span>
-            <span style="font-size: 1.5rem; font-weight: bold; color: #333;">₹{nse_price:.2f}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
+    
+    # Display last updated timestamp for clarity
+    st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
+
 
 # Timeframe Controls
 st.subheader("Select Timeframe:")
@@ -391,15 +451,15 @@ else:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                            {news['sentiment'].upper()}
-                        </span>
-                        <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                        <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                            {news['recommended_action']}
-                        </span>
+                                {news['sentiment'].upper()}
+                            </span>
+                            <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                            <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                                {news['recommended_action']}
+                            </span>
+                        </div>
                     </div>
-                </div>
-                """
+                    """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
