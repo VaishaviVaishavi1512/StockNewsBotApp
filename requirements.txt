@@ -71,5 +71,6 @@ uvicorn==0.34.3
 watchdog==6.0.0
 websockets==15.0.1
 yfinance==0.2.63
-transformers==4.39.3
-torch==2.2.1
+transformers==4.40.1
+torch==2.7.1
+
