@@ -443,16 +443,17 @@ else:
         processed_news.append(processed_news_item)
 
         # For the trading bot output, use the first article as the 'latest'
-        if i == 0:
-            latest_trading_signal = {
-                "ticker": ticker_identified,
-                "sentiment": sentiment,
-                "event": news_item["event"], # Original event might be more general
-                "confidence": action_data["confidence"],
-                "recommended_action": action_data["recommended_action"],
-                "stop_loss": action_data["stop_loss"],
-                "take_profit": action_data["take_profit"]
-            }
+        for i, news_item in enumerate(raw_articles):
+          if i == 0:
+             latest_trading_signal = {
+            "ticker": CURRENT_STOCK,  # Not ticker_identified
+            "sentiment": sentiment,
+            "event": news_item["event"],
+            "confidence": action_data["confidence"],
+            "recommended_action": action_data["recommended_action"],
+            "stop_loss": action_data["stop_loss"],
+            "take_profit": action_data["take_profit"]
+        }
 
     news_col1, news_col2 = st.columns(2)
     for i, news in enumerate(processed_news):
@@ -592,14 +593,13 @@ st.markdown("---")
 st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app.")
 st.code(f"""
-if i == 0:
-    latest_trading_signal = {
-        "ticker": CURRENT_STOCK,  # 🔥 Force BEL
-        "sentiment": sentiment,
-        "event": news_item["event"],
-        "confidence": action_data["confidence"],
-        "recommended_action": action_data["recommended_action"],
-        "stop_loss": action_data["stop_loss"],
-        "take_profit": action_data["take_profit"]
-    }
+{{
+    "ticker": "{latest_trading_signal['ticker']}",
+    "sentiment": "{latest_trading_signal['sentiment']}",
+    "event": "{latest_trading_signal['event']}",
+    "confidence": {latest_trading_signal['confidence']},
+    "recommended_action": "{latest_trading_signal['recommended_action']}",
+    "stop_loss": {latest_trading_signal['stop_loss']},
+    "take_profit": {latest_trading_signal['take_profit']}
+}}
 """, language='json')
