@@ -26,28 +26,29 @@ if not NEWS_API_KEY:
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
-    # Updated to check for common names/aliases for better NER for BEL
+
     stock_aliases = {
         "IRCTC": ["irctc", "indian railways catering", "railways"],
         "SBI": ["sbi", "state bank of india"],
         "TATA MOTORS": ["tata motors", "tata"],
-        "BEL": ["bharat electronics", "bel"], # Updated for BEL
+        "BEL": ["bharat electronics", "bel"],
         "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
     }
-       
-    # Check if any alias for the current stock is in the text
+
+    # ✅ First, check if current stock is mentioned
     for alias in stock_aliases.get(current_stock_symbol.upper(), []):
         if alias in text_lower:
             return current_stock_symbol
-           
-    # Also check for other stock symbols if they appear in news for this page
+
+    # 🔁 Then check others (only if current stock not found)
     for stock_sym, aliases in stock_aliases.items():
-        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
-            # If another stock is mentioned, return its symbol.
-            # This is a simple NER, can be expanded with more robust models.
-            return stock_sym
-               
-    return "N/A"
+        if stock_sym != current_stock_symbol:
+            if any(alias in text_lower for alias in aliases):
+                return stock_sym
+
+    # 🛑 Default fallback
+    return current_stock_symbol
+
 
 def analyze_sentiment(text):
     positive_keywords = ["profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth", "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations", "robust", "healthy", "gains", "partnership", "collaboration", "launch"]
