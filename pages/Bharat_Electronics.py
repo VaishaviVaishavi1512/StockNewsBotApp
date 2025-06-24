@@ -35,19 +35,22 @@ def perform_ner(text, current_stock_symbol):
         "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
     }
 
-    # ✅ First, check if current stock is mentioned
-    for alias in stock_aliases.get(current_stock_symbol.upper(), []):
-        if alias in text_lower:
-            return current_stock_symbol
+    # First, check if current stock is mentioned
+    current_aliases = stock_aliases.get(current_stock_symbol.upper(), [])
+    current_mentioned = any(alias in text_lower for alias in current_aliases)
 
-    # 🔁 Then check others (only if current stock not found)
+    if current_mentioned:
+        return current_stock_symbol
+
+    # Only if current stock is not mentioned, check for other stocks
     for stock_sym, aliases in stock_aliases.items():
         if stock_sym != current_stock_symbol:
             if any(alias in text_lower for alias in aliases):
                 return stock_sym
 
-    # 🛑 Default fallback
+    # Fallback: assume it's about the current stock
     return current_stock_symbol
+
 
 
 def analyze_sentiment(text):
