@@ -8,28 +8,6 @@ import requests
 import yfinance as yf # Import yfinance directly
 import os # To access environment variables if st.secrets not used (for local testing mostly)
 import pytz # NEW: Import pytz for timezone handling
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
-import re
-
-# Load FinBERT
-@st.cache_resource
-def load_finbert():
-    tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
-    model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
-    return tokenizer, model
-
-finbert_tokenizer, finbert_model = load_finbert()
-
-def analyze_with_finbert(text):
-    inputs = finbert_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-    outputs = finbert_model(**inputs)
-    probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    sentiment = torch.argmax(probs).item()
-    labels = ['negative', 'neutral', 'positive']
-    return labels[sentiment], round(probs[0][sentiment].item(), 2)
-
-
 
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
@@ -48,32 +26,28 @@ if not NEWS_API_KEY:
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
     text_lower = text.lower()
-
+    # Updated to check for common names/aliases for better NER for BEL
     stock_aliases = {
         "IRCTC": ["irctc", "indian railways catering", "railways"],
         "SBI": ["sbi", "state bank of india"],
         "TATA MOTORS": ["tata motors", "tata"],
-        "BEL": ["bharat electronics", "bel"],
+        "BEL": ["bharat electronics", "bel"], # Updated for BEL
         "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
     }
-
-    # First, check if current stock is mentioned
-    current_aliases = stock_aliases.get(current_stock_symbol.upper(), [])
-    current_mentioned = any(alias in text_lower for alias in current_aliases)
-
-    if current_mentioned:
-        return current_stock_symbol
-
-    # Only if current stock is not mentioned, check for other stocks
+       
+    # Check if any alias for the current stock is in the text
+    for alias in stock_aliases.get(current_stock_symbol.upper(), []):
+        if alias in text_lower:
+            return current_stock_symbol
+           
+    # Also check for other stock symbols if they appear in news for this page
     for stock_sym, aliases in stock_aliases.items():
-        if stock_sym != current_stock_symbol:
-            if any(alias in text_lower for alias in aliases):
-                return stock_sym
-
-    # Fallback: assume it's about the current stock
-    return current_stock_symbol
-
-
+        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
+            # If another stock is mentioned, return its symbol.
+            # This is a simple NER, can be expanded with more robust models.
+            return stock_sym
+               
+    return "N/A"
 
 def analyze_sentiment(text):
     positive_keywords = ["profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth", "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations", "robust", "healthy", "gains", "partnership", "collaboration", "launch"]
@@ -404,13 +378,14 @@ else:
     st.warning(f"No stock data available for {CURRENT_STOCK} for the selected timeframe. Check yfinance compatibility for this symbol.")
 
 
-# --- News Section with FinBERT & NER Filtering ---
+# --- News Feed Section (fetched directly and processed) ---
 st.markdown("---")
-st.subheader("📰 Latest Financial News (Filtered & Analyzed)")
+st.subheader(f"Latest News for {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 
-raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock", language="en", sort_by="relevancy", days_back=30)
+# Fetch news and analysis directly
+raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock") # Pass full name to API for better results
 
-relevant_articles = []
+processed_news = []
 latest_trading_signal = {
     "ticker": CURRENT_STOCK,
     "sentiment": "N/A",
@@ -421,80 +396,86 @@ latest_trading_signal = {
     "take_profit": 0.00
 }
 
-ist_timezone = pytz.timezone('Asia/Kolkata')
+if not raw_articles:
+    st.info(f"No news found for {FULL_STOCK_NAME}.")
+else:
+    # Define IST timezone once
+    ist_timezone = pytz.timezone('Asia/Kolkata')
 
-for i, article in enumerate(raw_articles):
-    content = article.get("content", "") or ""
-    full_text = f"{article.get('title', '')} {content}"
-    if not content:
-        continue
+    for i, news_item in enumerate(raw_articles):
+        full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
+           
+        # Perform NLP and action mapping directly
+        ticker_identified = perform_ner(full_text, CURRENT_STOCK)
+        sentiment = analyze_sentiment(full_text)
+        action_data = map_news_to_action(sentiment)
 
-    # Check if the article is actually about this stock
-    if perform_ner(full_text, CURRENT_STOCK) != CURRENT_STOCK:
-        continue
+        # Convert publishedAt to IST
+        published_utc_str = news_item.get("publishedAt", "N/A")
+        published_ist_str = "N/A"
+        if published_utc_str != "N/A":
+            try:
+                # Parse the UTC timestamp provided by NewsAPI (e.g., "2023-10-27T10:00:00Z")
+                published_utc = datetime.strptime(published_utc_str, '%Y-%m-%dT%H:%M:%SZ')
+                # Make it timezone-aware (as UTC) and then convert to IST
+                published_ist = published_utc.replace(tzinfo=pytz.utc).astimezone(ist_timezone)
+                published_ist_str = published_ist.strftime('%Y-%m-%d %H:%M:%S IST')
+            except ValueError:
+                # Handle cases where publishedAt might be in a different format or invalid
+                published_ist_str = f"Invalid Date Format: {published_utc_str}"
 
-    sentiment, confidence = analyze_with_finbert(full_text)
-    if confidence < 0.6:
-        continue
 
-    # Convert time to IST
-    published_ist_str = "N/A"
-    try:
-        published_utc = datetime.strptime(article["publishedAt"], '%Y-%m-%dT%H:%M:%SZ')
-        published_ist = published_utc.replace(tzinfo=pytz.utc).astimezone(ist_timezone)
-        published_ist_str = published_ist.strftime('%Y-%m-%d %H:%M:%S IST')
-    except:
-        pass
-
-    action_data = map_news_to_action(sentiment)
-
-    if i == 0:
-        latest_trading_signal = {
-            "ticker": CURRENT_STOCK,
+        processed_news_item = {
+            "source": news_item["source"],
+            "title": news_item["title"],
+            "content": news_item["content"],
+            "url": news_item["url"],
+            "publishedAt": published_ist_str, # Use IST formatted string here
             "sentiment": sentiment,
-            "event": article.get("event", "General News"),
-            "confidence": confidence,
+            "event": news_item["event"],
             "recommended_action": action_data["recommended_action"],
-            "stop_loss": action_data["stop_loss"],
-            "take_profit": action_data["take_profit"]
+            "confidence": action_data["confidence"]
         }
+        processed_news.append(processed_news_item)
 
-    relevant_articles.append({
-        "source": article.get("source", "Unknown"),
-        "title": article.get("title", "No Title"),
-        "content": content,
-        "url": article.get("url", "#"),
-        "publishedAt": published_ist_str,
-        "sentiment": sentiment,
-        "confidence": confidence,
-        "recommended_action": action_data["recommended_action"]
-    })
+        # For the trading bot output, use the first article as the 'latest'
+        if i == 0:
+            latest_trading_signal = {
+                "ticker": ticker_identified,
+                "sentiment": sentiment,
+                "event": news_item["event"], # Original event might be more general
+                "confidence": action_data["confidence"],
+                "recommended_action": action_data["recommended_action"],
+                "stop_loss": action_data["stop_loss"],
+                "take_profit": action_data["take_profit"]
+            }
 
-if relevant_articles:
     news_col1, news_col2 = st.columns(2)
-    for i, news in enumerate(relevant_articles):
+    for i, news in enumerate(processed_news):
         news_html = f"""
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['publishedAt']}</p>    
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>    
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                    {news['sentiment'].upper()} ({news['confidence']*100:.0f}%)
-                </span>
-                <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                    {news['recommended_action']}
-                </span>
-            </div>
-        </div>
-        """
-        (news_col1 if i % 2 == 0 else news_col2).markdown(news_html, unsafe_allow_html=True)
-else:
-    st.info("No relevant, high-confidence BEL news found from NewsAPI in the last 30 days.")
-
+                                {news['sentiment'].upper()}
+                            </span>
+                            <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                            <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                                {news['recommended_action']}
+                            </span>
+                        </div>
+                    </div>
+                    """
+        if i % 2 == 0:
+            with news_col1:
+                st.markdown(news_html, unsafe_allow_html=True)
+        else:
+            with news_col2:
+                st.markdown(news_html, unsafe_allow_html=True)
 # --- Strategy Decision Engine ---
 st.markdown("---")
 st.markdown("## 🧠 Strategy Decision Engine")
