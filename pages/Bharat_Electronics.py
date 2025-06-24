@@ -593,7 +593,7 @@ st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app.")
 st.code(f"""
 {{
-    "ticker": "{latest_trading_signal['ticker']}",
+    "ticker": CURRENT_STOCK,
     "sentiment": "{latest_trading_signal['sentiment']}",
     "event": "{latest_trading_signal['event']}",
     "confidence": {latest_trading_signal['confidence']},
