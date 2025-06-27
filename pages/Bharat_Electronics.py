@@ -21,7 +21,7 @@ NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-                "Please add it to your Streamlit secrets or environment variables.")
+               "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
@@ -34,19 +34,19 @@ def perform_ner(text, current_stock_symbol):
         "BEL": ["bharat electronics", "bel"], # Updated for BEL
         "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
     }
-       
+        
     # Check if any alias for the current stock is in the text
     for alias in stock_aliases.get(current_stock_symbol.upper(), []):
         if alias in text_lower:
             return current_stock_symbol
-           
+            
     # Also check for other stock symbols if they appear in news for this page
     for stock_sym, aliases in stock_aliases.items():
         if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
             # If another stock is mentioned, return its symbol.
             # This is a simple NER, can be expanded with more robust models.
             return stock_sym
-               
+                
     return "N/A"
 
 def analyze_sentiment(text):
@@ -56,7 +56,7 @@ def analyze_sentiment(text):
 
     score = 0
     text_lower = text.lower()
-       
+        
     for keyword in positive_keywords:
         if keyword in text_lower:
             score += 1
@@ -225,13 +225,13 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
         "apiKey": NEWS_API_KEY,
         "pageSize": 20
     }
-       
+        
     print(f"Attempting NewsAPI.org for query: '{query}'")
     try:
         response = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-           
+            
         if data["status"] == "ok":
             articles = []
             for article in data["articles"]:
@@ -312,7 +312,7 @@ with price_placeholder.container():
         """, unsafe_allow_html=True)
     else:
         st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
-       
+        
     # Get current time in IST for display
     ist_timezone = pytz.timezone('Asia/Kolkata')
     current_ist_time = datetime.now(ist_timezone)
@@ -387,7 +387,7 @@ raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock") # Pass full na
 
 processed_news = []
 latest_trading_signal = {
-    "ticker": CURRENT_STOCK,
+    "ticker": CURRENT_STOCK, # Initialize with current stock
     "sentiment": "N/A",
     "event": "N/A",
     "confidence": 0.00,
@@ -404,7 +404,7 @@ else:
 
     for i, news_item in enumerate(raw_articles):
         full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
-           
+            
         # Perform NLP and action mapping directly
         ticker_identified = perform_ner(full_text, CURRENT_STOCK)
         sentiment = analyze_sentiment(full_text)
@@ -439,9 +439,10 @@ else:
         processed_news.append(processed_news_item)
 
         # For the trading bot output, use the first article as the 'latest'
+        # Crucially, force the ticker to CURRENT_STOCK for this page's output
         if i == 0:
             latest_trading_signal = {
-                "ticker": ticker_identified,
+                "ticker": CURRENT_STOCK, # <--- MODIFIED HERE to always show BEL
                 "sentiment": sentiment,
                 "event": news_item["event"], # Original event might be more general
                 "confidence": action_data["confidence"],
@@ -461,15 +462,15 @@ else:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                                {news['sentiment'].upper()}
-                            </span>
-                            <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                            <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                                {news['recommended_action']}
-                            </span>
-                        </div>
-                    </div>
-                    """
+                                        {news['sentiment'].upper()}
+                                    </span>
+                                    <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                                        {news['recommended_action']}
+                                    </span>
+                                </div>
+                            </div>
+                            """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
