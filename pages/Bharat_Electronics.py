@@ -419,7 +419,8 @@ st.subheader("Processing Latest News for Strategy Decision")
 
 # Fetch news specifically for Bharat Electronics or BEL
 # The query is made more specific to reduce irrelevant "electronics" news
-raw_articles = get_financial_news_api(f'"{FULL_STOCK_NAME}" OR "{CURRENT_STOCK}" stock India')
+# Changed query for broader initial retrieval, then filter with NER
+raw_articles = get_financial_news_api(f'"{FULL_STOCK_NAME}" OR "{CURRENT_STOCK}" Bharat Electronics OR BEL stock India')
 
 # Initialize latest_trading_signal with default values
 latest_trading_signal = {
@@ -432,8 +433,11 @@ latest_trading_signal = {
     "take_profit": 0.00
 }
 
+# List to hold news articles deemed relevant enough for display
+processed_relevant_news_for_display = []
+
 # Process and filter news articles
-relevant_news_found = False
+relevant_news_found_for_signal = False
 if raw_articles:
     ist_timezone = pytz.timezone('Asia/Kolkata')
     for news_item in raw_articles:
@@ -457,24 +461,72 @@ if raw_articles:
                 except ValueError:
                     published_ist_str = "Invalid Date Format"
 
-            # Update latest_trading_signal with the first relevant news found
-            latest_trading_signal = {
-                "ticker": CURRENT_STOCK, # Always force to CURRENT_STOCK for this page
+            # Add to list for display
+            processed_relevant_news_for_display.append({
+                "source": news_item["source"],
+                "title": news_item["title"],
+                "content": news_item["content"],
+                "url": news_item["url"],
+                "publishedAt": published_ist_str,
                 "sentiment": sentiment,
-                "event": news_item.get("title", "News Article"), # Use news title as event
-                "confidence": action_data["confidence"],
+                "event": news_item["event"],
                 "recommended_action": action_data["recommended_action"],
-                "stop_loss": action_data["stop_loss"],
-                "take_profit": action_data["take_profit"]
-            }
-            relevant_news_found = True
-            break # Stop after finding the first relevant article for the signal
+                "confidence": action_data["confidence"]
+            })
 
-if relevant_news_found:
-    st.info(f"Analyzed latest relevant news for {FULL_STOCK_NAME}.")
+            # For the trading bot output, use the first relevant article found
+            if not relevant_news_found_for_signal:
+                latest_trading_signal = {
+                    "ticker": CURRENT_STOCK, # Always force to CURRENT_STOCK for this page
+                    "sentiment": sentiment,
+                    "event": news_item.get("title", "News Article"), # Use news title as event
+                    "confidence": action_data["confidence"],
+                    "recommended_action": action_data["recommended_action"],
+                    "stop_loss": action_data["stop_loss"],
+                    "take_profit": action_data["take_profit"]
+                }
+                relevant_news_found_for_signal = True
+
+if relevant_news_found_for_signal:
+    st.info(f"Analyzed latest relevant news for {FULL_STOCK_NAME}. See below for articles.")
 else:
-    st.info(f"No specific news found for {FULL_STOCK_NAME} that directly mentions the company. Using a default neutral signal.")
+    st.info(f"No specific news found for {FULL_STOCK_NAME} that directly mentions the company in recent articles. Using a default neutral signal for strategy decision.")
 
+
+# --- Relevant News Articles Display Section ---
+st.markdown("---")
+st.subheader(f"Relevant News Articles for {FULL_STOCK_NAME} ({CURRENT_STOCK})")
+
+if processed_relevant_news_for_display:
+    # Display news in two columns
+    news_col1, news_col2 = st.columns(2)
+    for i, news in enumerate(processed_relevant_news_for_display):
+        news_html = f"""
+        <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);">
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>    
+            <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3>
+            <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p>
+            <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p>
+            <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
+                <span style="font-weight: 500;">Sentiment:</span>
+                <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
+                                        {news['sentiment'].upper()}
+                                    </span>
+                                    <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                                        {news['recommended_action']}
+                                    </span>
+                                </div>
+                            </div>
+                            """
+        if i % 2 == 0:
+            with news_col1:
+                st.markdown(news_html, unsafe_allow_html=True)
+        else:
+            with news_col2:
+                st.markdown(news_html, unsafe_allow_html=True)
+else:
+    st.info("No relevant news articles found for display after filtering by specific mentions of Bharat Electronics Limited or BEL.")
 
 # --- Strategy Decision Engine ---
 st.markdown("---")
