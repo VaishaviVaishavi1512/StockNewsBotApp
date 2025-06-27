@@ -45,36 +45,53 @@ tokenizer, model = load_finbert_model()
 def perform_ner(text, current_stock_symbol, full_stock_name):
     """
     Performs a simplified Named Entity Recognition (NER) to identify if the text
-    specifically mentions the current stock.
+    specifically mentions the current stock or its associated sector in a relevant way.
     """
     text_lower = text.lower()
     
-    # Define highly specific aliases for the current stock (IRCTC)
-    specific_aliases = {
-        "IRCTC": ["irctc", "indian railways catering and tourism corporation ltd", "indian railways catering", "railways", "indian rail", "railway ticket booking"]
-    }
+    # Consolidated, specific aliases and strongly associated sector keywords for the CURRENT_STOCK (IRCTC)
+    current_stock_keywords = [
+        "irctc", 
+        "indian railway catering and tourism corporation ltd", 
+        "indian railways catering", 
+        "indian rail", 
+        "railways", 
+        "railway ticket booking", 
+        "online train tickets", 
+        "rail travel india",
+        "railway tourism",
+        full_stock_name.lower() # Ensure full name is always checked
+    ]
     
-    # Check for specific, unambiguous mentions of the current stock
-    for alias in specific_aliases.get(current_stock_symbol.upper(), []):
-        if alias in text_lower:
-            return current_stock_symbol
-            
-    # Also check if the full official name is explicitly mentioned
-    if full_stock_name.lower() in text_lower:
-        return current_stock_symbol
+    # Check if any of CURRENT_STOCK's keywords are present
+    current_stock_match = any(keyword in text_lower for keyword in current_stock_keywords)
 
-    # More generic check for other stocks (less strict, but still looks for specific aliases)
+    # Define aliases for other specific stocks
     stock_aliases_general = {
         "SBI": ["sbi", "state bank of india"],
         "TATA MOTORS": ["tata motors", "tata"],
         "BHARAT ELECTRONICS": ["bharat electronics", "bel"],
         "INDIGO AIRLINES": ["indigo airlines", "indigo", "interglobe aviation"]
     }
+    
+    other_stock_identified = "N/A"
     for stock_sym, aliases in stock_aliases_general.items():
-        if stock_sym != current_stock_symbol and any(alias in text_lower for alias in aliases):
-            return stock_sym # Return the identified other stock if present
-            
-    return "N/A" # Default if no specific stock is identified
+        if any(alias in text_lower for alias in aliases):
+            other_stock_identified = stock_sym
+            break # Found an explicit mention of another stock
+
+    # Decision logic:
+    if current_stock_match and other_stock_identified == "N/A":
+        # If current stock keywords are found AND no other specific stock is mentioned,
+        # it's considered relevant to the current stock.
+        return current_stock_symbol
+    elif other_stock_identified != "N/A":
+        # If another specific stock is mentioned, prioritize that over broad current_stock_keywords
+        return other_stock_identified
+    else:
+        # If neither current stock nor other specific stocks are mentioned explicitly.
+        # This will be "N/A" and filtered out for strategy decision, but news might still appear if not too strict.
+        return "N/A"
 
 def analyze_sentiment(text):
     """
