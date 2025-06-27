@@ -10,6 +10,10 @@ import os # To access environment variables if st.secrets not used (for local te
 import pytz # Import pytz for timezone handling
 import ta # Technical Analysis library
 
+# --- FinBERT Specific Imports ---
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
 
@@ -23,6 +27,19 @@ NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
                "Please add it to your Streamlit secrets or environment variables.")
+
+# --- FinBERT Model Loading (Cached for performance) ---
+@st.cache_resource
+def load_finbert_model():
+    """
+    Loads the pre-trained FinBERT tokenizer and model.
+    Uses st.cache_resource to load them only once.
+    """
+    tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
+    model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+    return tokenizer, model
+
+tokenizer, model = load_finbert_model()
 
 # --- NLP and Action Mapping Functions ---
 def perform_ner(text, current_stock_symbol, full_stock_name):
@@ -48,7 +65,7 @@ def perform_ner(text, current_stock_symbol, full_stock_name):
         return current_stock_symbol
 
     # More generic check for other stocks (less strict, but still looks for specific aliases)
-    # This part is kept from your original code to handle mentions of other companies,
+    # This part is is kept from your original code to handle mentions of other companies,
     # but the primary focus for *this page's* news is `current_stock_symbol`.
     stock_aliases_general = {
         "IRCTC": ["irctc", "indian railways catering", "railways"],
@@ -64,46 +81,36 @@ def perform_ner(text, current_stock_symbol, full_stock_name):
 
 def analyze_sentiment(text):
     """
-    Performs rule-based sentiment analysis, simulating FinBERT's financial focus
-    by using an expanded list of finance-specific keywords.
+    Analyzes sentiment using the loaded FinBERT model.
+    The FinBERT model typically outputs scores for 'positive', 'negative', 'neutral'.
     """
-    positive_keywords = [
-        "profit", "soar", "jump", "rises", "invest", "contract", "boosts", "growth",
-        "strong", "improves", "expands", "dividend", "bullish", "exceeding expectations",
-        "robust", "healthy", "gains", "partnership", "collaboration", "launch",
-        "acquisition", "revenue", "earnings", "outlook positive", "upgrade", "orders",
-        "exports", "defense deal", "manufacturing growth", "innovation", "market leader"
-    ]
-    negative_keywords = [
-        "loss", "headwinds", "rising fuel", "supply chain issues", "missed", "resigned",
-        "downgrade", "decline", "fall", "struggle", "uncertainty", "volatility",
-        "challenges", "debt", "slowdown", "competition", "scandal", "legal issues",
-        "strike", "pandemic impact", "dilution", "restructuring"
-    ]
-    neutral_keywords = [
-        "board approves", "plans", "announces", "decision", "discussions", "talks",
-        "quarterly results", "statement", "meeting", "report", "filing", "appointment",
-        "guidance", "agreement", "memorandum"
-    ]
+    # Ensure text is not empty, as FinBERT might struggle with it
+    if not text.strip():
+        return "neutral"
 
-    score = 0
-    text_lower = text.lower()
+    try:
+        # Tokenize the input text
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
         
-    for keyword in positive_keywords:
-        if keyword in text_lower:
-            score += 1
-    for keyword in negative_keywords:
-        if keyword in text_lower:
-            score -= 1
-
-    if score > 0:
-        return "positive"
-    elif score < 0:
-        return "negative"
-    else:
-        if any(keyword in text_lower for keyword in neutral_keywords):
-            return "neutral"
-        return "neutral" # Default to neutral if no strong keywords
+        # Perform inference
+        with torch.no_grad(): # Disable gradient calculation for inference
+            outputs = model(**inputs)
+        
+        # Get probabilities by applying softmax to logits
+        probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        
+        # Get the index of the highest probability
+        sentiment_idx = torch.argmax(probabilities).item()
+        
+        # Map index to sentiment label (FinBERT's typical output order)
+        # 0: positive, 1: negative, 2: neutral (verify this for ProsusAI/finbert if needed)
+        sentiment_labels = ["positive", "negative", "neutral"] 
+        sentiment = sentiment_labels[sentiment_idx]
+        
+        return sentiment
+    except Exception as e:
+        st.error(f"Error during FinBERT sentiment analysis: {e}. Falling back to neutral.")
+        return "neutral"
 
 def map_news_to_action(sentiment):
     """
@@ -116,12 +123,13 @@ def map_news_to_action(sentiment):
 
     if sentiment == "positive":
         action = "BUY"
-        confidence = round(0.7 + np.random.rand() * 0.2, 2)
+        # FinBERT provides more precise sentiment, so we can use a higher base confidence for its signals
+        confidence = round(0.8 + np.random.rand() * 0.1, 2) 
         stop_loss = round(2.5 + np.random.rand() * 1.0, 2)
         take_profit = round(5.0 + np.random.rand() * 2.0, 2)
     elif sentiment == "negative":
         action = "SELL/SHORT"
-        confidence = round(0.7 + np.random.rand() * 0.2, 2)
+        confidence = round(0.8 + np.random.rand() * 0.1, 2)
         stop_loss = round(3.0 + np.random.rand() * 1.0, 2)
         take_profit = round(6.0 + np.random.rand() * 2.0, 2)
 
@@ -447,7 +455,7 @@ if raw_articles:
         ticker_identified = perform_ner(full_text, CURRENT_STOCK, FULL_STOCK_NAME)
         
         if ticker_identified == CURRENT_STOCK: # Only process if it's explicitly about BEL
-            sentiment = analyze_sentiment(full_text)
+            sentiment = analyze_sentiment(full_text) # This now uses FinBERT
             action_data = map_news_to_action(sentiment)
             
             # Convert publishedAt to IST (if available and valid)

@@ -71,3 +71,5 @@ uvicorn==0.34.3
 watchdog==6.0.0
 websockets==15.0.1
 yfinance==0.2.63
+transformers # Add this line
+torch        # Add this line
