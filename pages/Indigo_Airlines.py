@@ -10,24 +10,20 @@ import os # To access environment variables if st.secrets not used (for local te
 import pytz # NEW: Import pytz for timezone handling
 import yfinance as yf
 import pandas as pd
-latest_trading_signal = {
-    "sentiment": "Neutral",
-    "confidence": "0.75",
-    "recommended_action": "HOLD"
-}
 
 # --- NEW: Import streamlit_autorefresh for live updates ---
 from streamlit_autorefresh import st_autorefresh
 
 # --- Stock-Specific Configuration ---
 CURRENT_STOCK = "INDIGO AIRLINES" # Changed from IRCTC to INDIGO AIRLINES for display name
+FULL_STOCK_NAME = "InterGlobe Aviation Ltd." # Added for better display, as Indigo Airlines is the common name for the company InterGlobe Aviation Ltd.
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-                "Please add it to your Streamlit secrets or environment variables.")
+               "Please add it to your Streamlit secrets or environment variables.")
 
 # --- NLP and Action Mapping Functions (Directly in Streamlit app) ---
 def perform_ner(text, current_stock_symbol):
@@ -148,7 +144,7 @@ def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
     yf_base_symbol = symbol_map.get(symbol.upper(), symbol) # Use mapped symbol if available
 
     if exchange.upper() == "NSE": return f"{yf_base_symbol}" # .NS is typically included in the map
-    elif exchange.upper() == "BSE":  
+    elif exchange.upper() == "BSE":    
         # Attempt a common BSE suffix, but yfinance coverage for BSE can be less direct
         # For example, INDIGO on BSE might be different. Let's try .BO if it's not already in symbol_map
         if not yf_base_symbol.endswith(".NS") and not yf_base_symbol.endswith(".BO"):
@@ -163,7 +159,7 @@ def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     try:
         ticker = yf.Ticker(yf_symbol)
         # Use 'regularMarketPrice' for current price
-        live_price = ticker.info.get('regularMarketPrice')  
+        live_price = ticker.info.get('regularMarketPrice')    
         # Fallback to 'currentPrice' or 'dayHigh'/'dayLow' if market is closed or info incomplete
         if live_price is None:
             live_price = ticker.info.get('currentPrice')
@@ -294,12 +290,12 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 
 # --- Streamlit UI Components --- 
 
-st.header(f"📈 Detailed Dashboard: {CURRENT_STOCK}") 
-st.write(f"Comprehensive insights for {CURRENT_STOCK} on BSE/NSE.") 
+st.header(f"📈 Detailed Dashboard: {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header to include full name
+st.write(f"Comprehensive insights for {FULL_STOCK_NAME} on BSE/NSE.") 
 
 # --- NEW: Auto-refresh the page every 30 seconds for live updates --- 
 # This will cause the entire script to re-run, fetching fresh prices/news if caches expire. 
-st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")  
+st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")    
 
 
 # Display BSE and NSE prices (fetched directly here from yfinance) 
@@ -354,7 +350,7 @@ stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # 
 
 # --- Graphs Section (Stacked Vertically) --- 
 st.markdown("---") 
-st.subheader(f"Price Charts for {CURRENT_STOCK}") 
+st.subheader(f"Price Charts for {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 
 if not stock_data.empty: 
     # Candlestick Chart 
@@ -398,14 +394,14 @@ else:
 
 # --- News Feed Section (fetched directly and processed) --- 
 st.markdown("---") 
-st.subheader(f"Latest News for {CURRENT_STOCK}") 
+st.subheader(f"Latest News for {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
 
 # Fetch news and analysis directly 
-raw_articles = get_financial_news_api(f"{CURRENT_STOCK} stock") # Pass query to API function 
+raw_articles = get_financial_news_api(f"{FULL_STOCK_NAME} stock") # Pass query to API function 
 
 processed_news = [] 
 latest_trading_signal = { 
-    "ticker": CURRENT_STOCK, 
+    "ticker": CURRENT_STOCK, # Initialize with current stock
     "sentiment": "N/A", 
     "event": "N/A", 
     "confidence": 0.00, 
@@ -415,7 +411,7 @@ latest_trading_signal = {
 } 
 
 if not raw_articles: 
-    st.info(f"No news found for {CURRENT_STOCK}.") 
+    st.info(f"No news found for {FULL_STOCK_NAME}.") 
 else: 
     # Define IST timezone once 
     ist_timezone = pytz.timezone('Asia/Kolkata') 
@@ -457,9 +453,10 @@ else:
         processed_news.append(processed_news_item) 
 
         # For the trading bot output, use the first article as the 'latest' 
+        # Crucially, force the ticker to CURRENT_STOCK for this page's output
         if i == 0: 
             latest_trading_signal = { 
-                "ticker": ticker_identified, 
+                "ticker": CURRENT_STOCK, # <--- MODIFIED HERE to always show INDIGO AIRLINES
                 "sentiment": sentiment, 
                 "event": news_item["event"], # Original event might be more general 
                 "confidence": action_data["confidence"], 
@@ -472,22 +469,22 @@ else:
     for i, news in enumerate(processed_news): 
         news_html = f""" 
         <div style="background-color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);"> 
-            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>  
+            <p style="font-size: 0.75rem; color: #6b7280;">{news['source']} | {news['event']} | {news['publishedAt']}</p>    
             <h3 style="font-size: 1rem; font-weight: 600; color: #1f2937;">{news['title']}</h3> 
             <p style="font-size: 0.875rem; color: #374151;">{news['content'][:250]}...</p> 
             <p style="font-size: 0.75rem;"><a href="{news['url']}" target="_blank" style="color: #4f46e5;">Read more</a></p> 
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;"> 
                 <span style="font-weight: 500;">Sentiment:</span> 
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;"> 
-                                {news['sentiment'].upper()} 
-                            </span> 
-                            <span style="font-weight: 500; margin-left: 1rem;">Action:</span> 
-                            <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;"> 
-                                {news['recommended_action']} 
-                            </span> 
-                        </div> 
-                    </div> 
-                    """ 
+                                        {news['sentiment'].upper()} 
+                                    </span> 
+                                    <span style="font-weight: 500; margin-left: 1rem;">Action:</span> 
+                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;"> 
+                                        {news['recommended_action']} 
+                                    </span> 
+                                </div> 
+                            </div> 
+                            """ 
         if i % 2 == 0: 
             with news_col1: 
                 st.markdown(news_html, unsafe_allow_html=True) 
