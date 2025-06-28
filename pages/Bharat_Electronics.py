@@ -107,35 +107,69 @@ def analyze_sentiment(text):
         sentiment_labels = ["positive", "negative", "neutral"] 
         sentiment = sentiment_labels[sentiment_idx]
         
-        return sentiment
+        # Also return the confidence for the predicted sentiment
+        confidence = probabilities[0][sentiment_idx].item()
+        
+        return sentiment, confidence
     except Exception as e:
         st.error(f"Error during FinBERT sentiment analysis: {e}. Falling back to neutral.")
-        return "neutral"
+        return "neutral", 0.0
 
-def map_news_to_action(sentiment):
+def apply_ner_filters(text: str) -> bool:
     """
-    Maps sentiment to a trading action with simulated confidence, stop-loss, and take-profit targets.
+    Applies NER-like filters to identify high-impact negative news events.
+    Returns True if a high-impact event is detected, False otherwise.
+    """
+    text_lower = text.lower()
+    
+    high_impact_negative_keywords = [
+        "ceo resigning", "ceo steps down", "ceo quits",
+        "earnings drop", "revenue drop", "profit warning", "misses earnings",
+        "scandal", "investigation", "fraud", "lawsuit",
+        "product recall", "production halt", "major disruption",
+        "financial loss", "bankruptcy", "insolvency",
+        "regulatory fine", "sanction"
+    ]
+    
+    # Check for exact phrases or strong indicators of high impact negative news
+    for keyword in high_impact_negative_keywords:
+        if keyword in text_lower:
+            return True
+            
+    return False
+
+def map_news_to_action(sentiment: str, confidence: float, is_high_impact_negative: bool):
+    """
+    Maps sentiment to a trading action with simulated confidence, stop-loss, and take-profit targets,
+    incorporating the new news-based strategy rules.
+    
+    Buy on positive news sentiment with high confidence.
+    Sell on negative high-impact news.
     """
     action = "HOLD"
-    confidence = round(0.4 + np.random.rand() * 0.2, 2)
+    base_confidence = round(0.4 + np.random.rand() * 0.2, 2)
     stop_loss = round(np.random.uniform(1.0, 2.0), 2)
     take_profit = round(np.random.uniform(2.0, 4.0), 2)
 
-    if sentiment == "positive":
+    if sentiment == "positive" and confidence >= 0.75: # High confidence for positive news
         action = "BUY"
-        # FinBERT provides more precise sentiment, so we can use a higher base confidence for its signals
-        confidence = round(0.8 + np.random.rand() * 0.1, 2) 
+        base_confidence = round(0.85 + np.random.rand() * 0.1, 2) # Higher confidence
         stop_loss = round(2.5 + np.random.rand() * 1.0, 2)
         take_profit = round(5.0 + np.random.rand() * 2.0, 2)
-    elif sentiment == "negative":
+    elif sentiment == "negative" and is_high_impact_negative: # Negative and high impact
         action = "SELL/SHORT"
-        confidence = round(0.8 + np.random.rand() * 0.1, 2)
+        base_confidence = round(0.90 + np.random.rand() * 0.05, 2) # Very high confidence for high-impact negative
         stop_loss = round(3.0 + np.random.rand() * 1.0, 2)
         take_profit = round(6.0 + np.random.rand() * 2.0, 2)
+    elif sentiment == "negative": # Regular negative news (not high impact)
+        action = "CONSIDER SELL" # A softer sell signal
+        base_confidence = round(0.6 + np.random.rand() * 0.1, 2)
+        stop_loss = round(2.0 + np.random.rand() * 0.5, 2)
+        take_profit = round(4.0 + np.random.rand() * 1.0, 2)
 
     return {
         "recommended_action": action,
-        "confidence": confidence,
+        "confidence": base_confidence,
         "stop_loss": stop_loss,
         "take_profit": take_profit
     }
@@ -326,7 +360,7 @@ st.write(f"Comprehensive insights for {FULL_STOCK_NAME} on BSE/NSE.")
 
 # --- NEW: Auto-refresh the page every 30 seconds for live updates ---
 # This will cause the entire script to re-run, fetching fresh prices/news if caches expire.
-st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")     # Auto-refresh interval (30 seconds)
+st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")       # Auto-refresh interval (30 seconds)
 
 
 # Display BSE and NSE prices (fetched directly here from yfinance)
@@ -455,8 +489,10 @@ if raw_articles:
         ticker_identified = perform_ner(full_text, CURRENT_STOCK, FULL_STOCK_NAME)
         
         if ticker_identified == CURRENT_STOCK: # Only process if it's explicitly about BEL
-            sentiment = analyze_sentiment(full_text) # This now uses FinBERT
-            action_data = map_news_to_action(sentiment)
+            sentiment, sentiment_confidence = analyze_sentiment(full_text) # Get sentiment and its confidence
+            is_high_impact_negative = apply_ner_filters(full_text) # Apply NER filters for high-impact news
+
+            action_data = map_news_to_action(sentiment, sentiment_confidence, is_high_impact_negative)
             
             # Convert publishedAt to IST (if available and valid)
             published_utc_str = news_item.get("publishedAt", "N/A")
@@ -477,13 +513,16 @@ if raw_articles:
                 "url": news_item["url"],
                 "publishedAt": published_ist_str,
                 "sentiment": sentiment,
+                "sentiment_confidence": f"{sentiment_confidence:.2f}", # Display confidence
                 "event": news_item["event"],
                 "recommended_action": action_data["recommended_action"],
                 "confidence": action_data["confidence"]
             })
 
             # For the trading bot output, use the first relevant article found
-            if not relevant_news_found_for_signal:
+            # And prioritize high-impact or high-confidence news for the primary signal
+            if not relevant_news_found_for_signal or \
+               (action_data["recommended_action"] != "HOLD" and action_data["confidence"] > latest_trading_signal["confidence"]):
                 latest_trading_signal = {
                     "ticker": CURRENT_STOCK, # Always force to CURRENT_STOCK for this page
                     "sentiment": sentiment,
@@ -518,11 +557,11 @@ if processed_relevant_news_for_display:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                                        {news['sentiment'].upper()}
+                                        {news['sentiment'].upper()} (Confidence: {news['sentiment_confidence']})
                                     </span>
                                     <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                                        {news['recommended_action']}
+                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' or news['recommended_action'] == 'CONSIDER SELL' else '#3b82f6')}; margin-left: 0.25rem;">
+                                        {news['recommended_action']} (Confidence: {news['confidence']:.2f})
                                     </span>
                                 </div>
                             </div>
@@ -624,7 +663,7 @@ signals_summary.append(news_sentiment_signal)
 st.markdown(f"""
 <div style='background-color: #ede9fe; padding: 1rem; border-radius: 0.5rem;'>
     <h4>📰 <strong>News-Based Sentiment Signal</strong></h4>
-    <p><strong>Sentiment:</strong> {latest_trading_signal['sentiment']} | <strong>Confidence:</strong> {latest_trading_signal['confidence']}</p>
+    <p><strong>Sentiment:</strong> {latest_trading_signal['sentiment']} | <strong>Confidence:</strong> {latest_trading_signal['confidence']:.2f}</p>
     <p><strong>Signal:</strong> {news_sentiment_signal}</p>
 </div>
 """, unsafe_allow_html=True)
@@ -651,9 +690,9 @@ st.code(f"""
     "ticker": "{latest_trading_signal['ticker']}",
     "sentiment": "{latest_trading_signal['sentiment']}",
     "event": "{latest_trading_signal['event']}",
-    "confidence": {latest_trading_signal['confidence']},
+    "confidence": {latest_trading_signal['confidence']:.2f},
     "recommended_action": "{latest_trading_signal['recommended_action']}",
-    "stop_loss": {latest_trading_signal['stop_loss']},
-    "take_profit": {latest_trading_signal['take_profit']}
+    "stop_loss": {latest_trading_signal['stop_loss']:.2f},
+    "take_profit": {latest_trading_signal['take_profit']:.2f}
 }}
 """, language='json')
