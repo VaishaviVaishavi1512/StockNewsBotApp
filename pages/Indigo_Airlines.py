@@ -26,7 +26,7 @@ NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
 
 if not NEWS_API_KEY:
     st.warning("NewsAPI.org API Key not found. News data will be mocked. "
-               "Please add it to your Streamlit secrets or environment variables.")
+                "Please add it to your Streamlit secrets or environment variables.")
 
 # --- FinBERT Model Loading (Cached for performance) ---
 @st.cache_resource
@@ -112,6 +112,8 @@ def analyze_sentiment(text):
 def map_news_to_action(sentiment):
     """
     Maps sentiment to a trading action with simulated confidence, stop-loss, and take-profit targets.
+    This function will still generate varying values for the individual news articles.
+    The hardcoded values for the main signal will be applied later.
     """
     action = "HOLD"
     confidence = round(0.4 + np.random.rand() * 0.2, 2)
@@ -120,7 +122,6 @@ def map_news_to_action(sentiment):
 
     if sentiment == "positive":
         action = "BUY"
-        # FinBERT provides more precise sentiment, so we can use a higher base confidence for its signals
         confidence = round(0.8 + np.random.rand() * 0.1, 2) 
         stop_loss = round(2.5 + np.random.rand() * 1.0, 2)
         take_profit = round(5.0 + np.random.rand() * 2.0, 2)
@@ -324,7 +325,7 @@ st.write(f"Comprehensive insights for {FULL_STOCK_NAME} on BSE/NSE.")
 
 # --- NEW: Auto-refresh the page every 30 seconds for live updates --- 
 # This will cause the entire script to re-run, fetching fresh prices/news if caches expire. 
-st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")    
+st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}")     
 
 
 # Display BSE and NSE prices (fetched directly here from yfinance) 
@@ -481,23 +482,23 @@ if raw_articles:
                 "confidence": action_data["confidence"]
             })
 
-            # For the trading bot output, use the first relevant article found
+            # For the trading bot output, use the first relevant article found to get its title as event
             if not relevant_news_found_for_signal:
-                latest_trading_signal = {
-                    "ticker": CURRENT_STOCK, # Always force to CURRENT_STOCK for this page
-                    "sentiment": sentiment,
-                    "event": news_item.get("title", "News Article"), # Use news title as event
-                    "confidence": action_data["confidence"],
-                    "recommended_action": action_data["recommended_action"],
-                    "stop_loss": action_data["stop_loss"],
-                    "take_profit": action_data["take_profit"]
-                }
+                latest_trading_signal["event"] = news_item.get("title", "News Article")
                 relevant_news_found_for_signal = True
 
+# --- BEGIN MODIFICATION FOR HARDCODED SIGNAL OUTPUT ---
 if relevant_news_found_for_signal:
+    # Override the latest_trading_signal with the user-specified fixed values
+    latest_trading_signal["sentiment"] = "negative"
+    latest_trading_signal["recommended_action"] = "SELL/SHORT"
+    latest_trading_signal["confidence"] = 0.91
+    latest_trading_signal["stop_loss"] = 3.5
+    latest_trading_signal["take_profit"] = 6.0
     st.info(f"Analyzed latest relevant news for {FULL_STOCK_NAME}. See below for articles.")
 else:
     st.info(f"No specific news found for {FULL_STOCK_NAME} that directly mentions the company in recent articles. Using a default neutral signal for strategy decision.")
+# --- END MODIFICATION ---
 
 
 # --- Relevant News Articles Display Section ---
@@ -544,7 +545,7 @@ st.markdown("## 🧠 Strategy Decision Engine")
 strategy_data = stock_data.copy().dropna()
 strategy_data.sort_index(inplace=True)
 
-signals_summary = []  # Store individual strategy results
+signals_summary = []    # Store individual strategy results
 
 # --- 1. EMA Crossover ---
 # Fillna(0) ensures no errors if initial data is NaN, though dropna() above should handle most.
@@ -618,6 +619,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- 6. News-Based Strategy ---
+# This will now reflect the (potentially overridden) latest_trading_signal
 news_sentiment_signal = latest_trading_signal.get("recommended_action", "HOLD")
 signals_summary.append(news_sentiment_signal)
 
