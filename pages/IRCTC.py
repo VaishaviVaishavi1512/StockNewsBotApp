@@ -9,7 +9,7 @@ import yfinance as yf
 import os
 import pytz
 import ta
-from collections import Counter # Import Counter for weighted voting logic
+from collections import Counter
 
 # --- FinBERT Specific Imports ---
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -101,10 +101,8 @@ def analyze_sentiment(text):
         
         probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
         
-        # Get the index and probability of the highest score
         sentiment_prob, sentiment_idx = torch.max(probabilities, dim=1)
         
-        # Map index to sentiment label
         sentiment_labels = ["positive", "negative", "neutral"] 
         sentiment = sentiment_labels[sentiment_idx.item()]
         confidence = sentiment_prob.item()
@@ -125,15 +123,13 @@ def map_news_to_action(sentiment, confidence):
 
     if sentiment == "positive":
         action = "BUY"
-        # Aggressive targets for high confidence, conservative for low
         stop_loss = round(2.5 + (1 - confidence) * 2.5, 2)
         take_profit = round(5.0 + confidence * 4.0, 2)
     elif sentiment == "negative":
         action = "SELL/SHORT"
         stop_loss = round(3.0 + (1 - confidence) * 3.0, 2)
         take_profit = round(6.0 + confidence * 5.0, 2)
-    else: # Neutral
-        # Neutral news suggests less risk, so smaller targets and confidence is zero
+    else:
         confidence = 0.00
         stop_loss = 1.0 
         take_profit = 1.5
@@ -419,7 +415,7 @@ raw_articles = get_financial_news_api(f'"{FULL_STOCK_NAME}" OR "{CURRENT_STOCK}"
 # Initialize latest_trading_signal with default values
 latest_trading_signal = {
     "ticker": CURRENT_STOCK,
-    "sentiment": "neutral", # Default sentiment if no news found
+    "sentiment": "neutral",
     "event": "No relevant news found",
     "confidence": 0.00,
     "recommended_action": "HOLD",
@@ -430,8 +426,8 @@ latest_trading_signal = {
 processed_relevant_news_for_display = []
 relevant_news_found_for_signal = False
 
+# First, try to process real news from the API
 if raw_articles:
-    ist_timezone = pytz.timezone('Asia/Kolkata')
     for news_item in raw_articles:
         full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
         ticker_identified = perform_ner(full_text, CURRENT_STOCK, FULL_STOCK_NAME)
@@ -440,6 +436,7 @@ if raw_articles:
             sentiment, confidence = analyze_sentiment(full_text)
             action_data = map_news_to_action(sentiment, confidence)
             
+            ist_timezone = pytz.timezone('Asia/Kolkata')
             published_utc_str = news_item.get("publishedAt", "N/A")
             published_ist_str = "N/A"
             if published_utc_str != "N/A":
@@ -474,10 +471,42 @@ if raw_articles:
                 }
                 relevant_news_found_for_signal = True
 
-if relevant_news_found_for_signal:
-    st.info(f"Analyzed latest relevant news for {FULL_STOCK_NAME}. See below for articles.")
-else:
-    st.info(f"No specific news found for {FULL_STOCK_NAME} that directly mentions the company in recent articles. Using a default neutral signal for strategy decision.")
+# Fallback to mock data if no relevant news was found from the API
+if not relevant_news_found_for_signal:
+    st.info("No specific news found that directly mentions the company. Using mock news for demonstration purposes.")
+    mock_articles = [
+        {"title": "IRCTC Announces Expansion of E-catering Services", "content": "IRCTC is set to expand its popular e-catering services to 100 new stations, boosting revenue potential and market reach.", "source": "Mock Finance", "publishedAt": datetime.now().isoformat(), "url": "#"},
+        {"title": "Indian Railways Reports Record Passenger Numbers", "content": "Indian Railways, with IRCTC as its booking arm, reported record passenger numbers for the last quarter, signaling strong post-pandemic recovery.", "source": "Mock Business Times", "publishedAt": (datetime.now() - timedelta(days=1)).isoformat(), "url": "#"},
+        {"title": "Regulatory Fine Imposed on IRCTC for Service Delay", "content": "IRCTC has been issued a small fine by regulators due to an unforeseen service delay, which could temporarily impact market sentiment.", "source": "Mock Stock Watch", "publishedAt": (datetime.now() - timedelta(hours=12)).isoformat(), "url": "#"}
+    ]
+    
+    # Process mock articles to populate the display list and signal
+    for news_item in mock_articles:
+        sentiment, confidence = analyze_sentiment(f"{news_item['title']} {news_item['content']}")
+        action_data = map_news_to_action(sentiment, confidence)
+        processed_relevant_news_for_display.append({
+            "source": news_item["source"],
+            "title": news_item["title"],
+            "content": news_item["content"],
+            "url": news_item["url"],
+            "publishedAt": "Mock Date",
+            "sentiment": sentiment,
+            "event": "Mock Event",
+            "recommended_action": action_data["recommended_action"],
+            "confidence": action_data["confidence"]
+        })
+        if not relevant_news_found_for_signal:
+            latest_trading_signal = {
+                "ticker": CURRENT_STOCK,
+                "sentiment": sentiment,
+                "event": news_item.get("title", "Mock News Article"),
+                "confidence": action_data["confidence"],
+                "recommended_action": action_data["recommended_action"],
+                "stop_loss": action_data["stop_loss"],
+                "take_profit": action_data["take_profit"]
+            }
+            relevant_news_found_for_signal = True
+
 
 # --- Relevant News Articles Display Section ---
 st.markdown("---")
@@ -521,10 +550,8 @@ st.markdown("## 🧠 Strategy Decision Engine")
 strategy_data = stock_data.copy().dropna()
 strategy_data.sort_index(inplace=True)
 
-# Define a dictionary to hold signals and their weights
 action_weights = {"BUY": 0, "SELL/SHORT": 0, "HOLD": 0}
 
-# --- 1. EMA Crossover ---
 ema20 = ta.trend.ema_indicator(strategy_data['Close'], window=20).fillna(0)
 ema50 = ta.trend.ema_indicator(strategy_data['Close'], window=50).fillna(0)
 ema_signal = "BUY" if ema20.iloc[-1] > ema50.iloc[-1] else "SELL/SHORT"
@@ -539,7 +566,6 @@ with st.container():
     </div>
     """, unsafe_allow_html=True)
 
-# --- 2. SMA Crossover ---
 sma20 = ta.trend.sma_indicator(strategy_data['Close'], window=20).fillna(0)
 sma50 = ta.trend.sma_indicator(strategy_data['Close'], window=50).fillna(0)
 sma_signal = "BUY" if sma20.iloc[-1] > sma50.iloc[-1] else "SELL/SHORT"
@@ -553,7 +579,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 3. RSI Strategy ---
 rsi = ta.momentum.RSIIndicator(strategy_data['Close'], window=14).rsi().fillna(50)
 rsi_signal = "BUY" if rsi.iloc[-1] < 30 else ("SELL/SHORT" if rsi.iloc[-1] > 70 else "HOLD")
 action_weights[rsi_signal] += 1.0
@@ -566,7 +591,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 4. MACD ---
 macd_line = ta.trend.macd_diff(strategy_data['Close']).fillna(0)
 macd_signal = "BUY" if macd_line.iloc[-1] > 0 else "SELL/SHORT"
 action_weights[macd_signal] += 1.0
@@ -579,7 +603,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 5. Bollinger Bands ---
 bbands = ta.volatility.BollingerBands(strategy_data['Close'], window=20)
 bb_lower = bbands.bollinger_lband().iloc[-1]
 bb_upper = bbands.bollinger_hband().iloc[-1]
@@ -594,9 +617,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 6. News-Based Strategy (with confidence-based weight) ---
 news_sentiment_signal = latest_trading_signal.get("recommended_action", "HOLD")
-news_weight = latest_trading_signal.get("confidence", 0) * 2.0  # Give news a higher influence when confident
+news_weight = latest_trading_signal.get("confidence", 0) * 2.0
 action_weights[news_sentiment_signal] += news_weight
 
 st.markdown(f"""
@@ -607,10 +629,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Final Aggregated Decision ---
 final_signal = max(action_weights, key=action_weights.get)
 
-# Get current price for final output
 current_price_for_output = nse_price if nse_price is not None else bse_price
 if current_price_for_output is None:
     current_price_for_output = 0.0
@@ -626,7 +646,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Trading Bot Signal Output ---
 st.markdown("---")
 st.subheader("Trading Bot Signal (Simulated)")
 st.write("This structured JSON output is generated directly by your Streamlit app based on processed news and technical indicators.")
