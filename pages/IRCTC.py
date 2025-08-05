@@ -5,10 +5,11 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
-import yfinance as yf # Import yfinance directly
-import os # To access environment variables if st.secrets not used (for local testing mostly)
-import pytz # Import pytz for timezone handling
-import ta # Technical Analysis library
+import yfinance as yf
+import os
+import pytz
+import ta
+from collections import Counter # Import Counter for weighted voting logic
 
 # --- FinBERT Specific Imports ---
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -19,7 +20,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- Stock-Specific Configuration ---
 CURRENT_STOCK = "IRCTC"
-FULL_STOCK_NAME = "Indian Railway Catering And Tourism Corporation Ltd." # Added for better display
+FULL_STOCK_NAME = "Indian Railway Catering And Tourism Corporation Ltd."
 
 # --- API Key Configuration (for Streamlit Cloud: use st.secrets) ---
 NEWS_API_KEY = st.secrets.get("NEWS_API_KEY")
@@ -49,7 +50,6 @@ def perform_ner(text, current_stock_symbol, full_stock_name):
     """
     text_lower = text.lower()
     
-    # Consolidated, specific aliases and strongly associated sector keywords for the CURRENT_STOCK (IRCTC)
     current_stock_keywords = [
         "irctc", 
         "indian railway catering and tourism corporation ltd", 
@@ -60,13 +60,11 @@ def perform_ner(text, current_stock_symbol, full_stock_name):
         "online train tickets", 
         "rail travel india",
         "railway tourism",
-        full_stock_name.lower() # Ensure full name is always checked
+        full_stock_name.lower()
     ]
     
-    # Check if any of CURRENT_STOCK's keywords are present
     current_stock_match = any(keyword in text_lower for keyword in current_stock_keywords)
 
-    # Define aliases for other specific stocks
     stock_aliases_general = {
         "SBI": ["sbi", "state bank of india"],
         "TATA MOTORS": ["tata motors", "tata"],
@@ -78,78 +76,71 @@ def perform_ner(text, current_stock_symbol, full_stock_name):
     for stock_sym, aliases in stock_aliases_general.items():
         if any(alias in text_lower for alias in aliases):
             other_stock_identified = stock_sym
-            break # Found an explicit mention of another stock
+            break
 
-    # Decision logic:
     if current_stock_match and other_stock_identified == "N/A":
-        # If current stock keywords are found AND no other specific stock is mentioned,
-        # it's considered relevant to the current stock.
         return current_stock_symbol
     elif other_stock_identified != "N/A":
-        # If another specific stock is mentioned, prioritize that over broad current_stock_keywords
         return other_stock_identified
     else:
-        # If neither current stock nor other specific stocks are mentioned explicitly.
-        # This will be "N/A" and filtered out for strategy decision, but news might still appear if not too strict.
         return "N/A"
 
 def analyze_sentiment(text):
     """
-    Analyzes sentiment using the loaded FinBERT model.
-    The FinBERT model typically outputs scores for 'positive', 'negative', 'neutral'.
+    Analyzes sentiment using the loaded FinBERT model and returns the sentiment
+    label and the model's confidence score.
     """
-    # Ensure text is not empty, as FinBERT might struggle with it
     if not text.strip():
-        return "neutral"
+        return "neutral", 0.0
 
     try:
-        # Tokenize the input text
         inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
         
-        # Perform inference
-        with torch.no_grad(): # Disable gradient calculation for inference
+        with torch.no_grad():
             outputs = model(**inputs)
         
-        # Get probabilities by applying softmax to logits
         probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
         
-        # Get the index of the highest probability
-        sentiment_idx = torch.argmax(probabilities).item()
+        # Get the index and probability of the highest score
+        sentiment_prob, sentiment_idx = torch.max(probabilities, dim=1)
         
-        # Map index to sentiment label (FinBERT's typical output order)
-        # 0: positive, 1: negative, 2: neutral (verify this for ProsusAI/finbert if needed)
+        # Map index to sentiment label
         sentiment_labels = ["positive", "negative", "neutral"] 
-        sentiment = sentiment_labels[sentiment_idx]
+        sentiment = sentiment_labels[sentiment_idx.item()]
+        confidence = sentiment_prob.item()
         
-        return sentiment
+        return sentiment, confidence
     except Exception as e:
         st.error(f"Error during FinBERT sentiment analysis: {e}. Falling back to neutral.")
-        return "neutral"
+        return "neutral", 0.0
 
-def map_news_to_action(sentiment):
+def map_news_to_action(sentiment, confidence):
     """
-    Maps sentiment to a trading action with simulated confidence, stop-loss, and take-profit targets.
+    Maps sentiment and confidence to a trading action and dynamically
+    calculates stop-loss and take-profit targets.
     """
     action = "HOLD"
-    confidence = round(0.4 + np.random.rand() * 0.2, 2)
-    stop_loss = round(np.random.uniform(1.0, 2.0), 2)
-    take_profit = round(np.random.uniform(2.0, 4.0), 2)
+    stop_loss = 0.00
+    take_profit = 0.00
 
     if sentiment == "positive":
         action = "BUY"
-        # FinBERT provides more precise sentiment, so we can use a higher base confidence for its signals
-        confidence = round(0.8 + np.random.rand() * 0.1, 2) 
-        stop_loss = round(2.5 + np.random.rand() * 1.0, 2)
-        take_profit = round(5.0 + np.random.rand() * 2.0, 2)
+        # Aggressive targets for high confidence, conservative for low
+        stop_loss = round(2.5 + (1 - confidence) * 2.5, 2)
+        take_profit = round(5.0 + confidence * 4.0, 2)
     elif sentiment == "negative":
         action = "SELL/SHORT"
-        confidence = round(0.8 + np.random.rand() * 0.1, 2)
-        stop_loss = round(3.0 + np.random.rand() * 1.0, 2)
-        take_profit = round(6.0 + np.random.rand() * 2.0, 2)
+        stop_loss = round(3.0 + (1 - confidence) * 3.0, 2)
+        take_profit = round(6.0 + confidence * 5.0, 2)
+    else: # Neutral
+        # Neutral news suggests less risk, so smaller targets and confidence is zero
+        confidence = 0.00
+        stop_loss = 1.0 
+        take_profit = 1.5
 
     return {
         "recommended_action": action,
-        "confidence": confidence,
+        "confidence": round(confidence, 2),
         "stop_loss": stop_loss,
         "take_profit": take_profit
     }
@@ -157,7 +148,7 @@ def map_news_to_action(sentiment):
 # --- Mock Data Generation (Fallback if yfinance/NewsAPI fail) ---
 def generate_mock_stock_data_local(timeframe, num_points_override=None):
     data = []
-    last_close = np.random.uniform(980, 1020) # Adjusted typical price range for IRCTC
+    last_close = np.random.uniform(980, 1020)
     interval_seconds = 0
     num_points = 0
 
@@ -187,38 +178,33 @@ def generate_mock_stock_data_local(timeframe, num_points_override=None):
 
 # --- Financial Data Integration (yfinance) ---
 def get_yfinance_symbol(symbol: str, exchange: str = "NSE"):
-    # Mapping for common stock names to yfinance symbols for Indian stocks
     symbol_map = {
         "IRCTC": "IRCTC.NS",
         "SBI": "SBIN.NS",
         "TATA MOTORS": "TATAMOTORS.NS",
         "BHARAT ELECTRONICS": "BEL.NS",
-        "INDIGO AIRLINES": "INDIGO.NS" # InterGlobe Aviation Ltd. is the parent company for Indigo
+        "INDIGO AIRLINES": "INDIGO.NS"
     }
     
-    yf_base_symbol = symbol_map.get(symbol.upper(), symbol) # Use mapped symbol if available
+    yf_base_symbol = symbol_map.get(symbol.upper(), symbol)
 
-    if exchange.upper() == "NSE": return f"{yf_base_symbol}" # .NS is typically included in the map
+    if exchange.upper() == "NSE": return f"{yf_base_symbol}"
     elif exchange.upper() == "BSE":     
-        # Attempt a common BSE suffix, but yfinance coverage for BSE can be less direct
         if not yf_base_symbol.endswith(".NS") and not yf_base_symbol.endswith(".BO"):
             return f"{yf_base_symbol}.BO"
-        return yf_base_symbol # If it's already a .NS or specific symbol, keep it
-    return yf_base_symbol # Fallback 
+        return yf_base_symbol
+    return yf_base_symbol
 
-@st.cache_data(ttl=30) # Cache for 30 seconds for "live" price. St_autorefresh will trigger.
+@st.cache_data(ttl=30)
 def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance live price for: {yf_symbol}")
     try:
         ticker = yf.Ticker(yf_symbol)
-        # Use 'regularMarketPrice' for current price
         live_price = ticker.info.get('regularMarketPrice')     
-        # Fallback to 'currentPrice' or 'dayHigh'/'dayLow' if market is closed or info incomplete
         if live_price is None:
             live_price = ticker.info.get('currentPrice')
         if live_price is None:
-            # As a last resort, take the last close from recent history if nothing else works 
             hist_data = ticker.history(period="1d", interval="1m") 
             if not hist_data.empty:
                 live_price = hist_data['Close'].iloc[-1]
@@ -233,7 +219,7 @@ def get_live_stock_price_yf(symbol: str, exchange: str = "NSE"):
         print(f"Fallback: yfinance live price failed for {yf_symbol}: {e}. Generating mock.")
         return generate_mock_stock_data_local(timeframe='5m', num_points_override=1)['Close'].iloc[-1]
 
-@st.cache_data(ttl=15 * 60) # Cache for 15 minutes
+@st.cache_data(ttl=15 * 60)
 def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
     yf_symbol = get_yfinance_symbol(symbol, exchange)
     print(f"Attempting yfinance historical data for: {yf_symbol} ({timeframe})")
@@ -262,7 +248,7 @@ def get_historical_ohlc_yf(symbol: str, timeframe: str, exchange: str = "NSE"):
         return generate_mock_stock_data_local(timeframe=timeframe)
 
 # --- News API Integration (NewsAPI.org) ---
-@st.cache_data(ttl=5 * 60) # Cache for 5 minutes
+@st.cache_data(ttl=5 * 60)
 def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'relevancy', days_back: int = 30):
     if not NEWS_API_KEY:
         print("Fallback: NEWS_API_KEY not set. Returning mock news.")
@@ -312,7 +298,7 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
                     "content": "This is a mock news article due to NewsAPI.org rate limits.",
                     "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
                 }]
-            return [{ # Fallback for other NewsAPI errors
+            return [{
                 "source": "Mock News", "title": f"Mock News for {query} - API Error: {error_msg}",
                 "content": "News fetching failed. Using mock data.",
                 "url": "#", "publishedAt": datetime.now().isoformat(), "event": "Mock Event"
@@ -335,25 +321,18 @@ def get_financial_news_api(query: str, language: str = 'en', sort_by: str = 'rel
 
 # --- Streamlit UI Components ---
 
-st.header(f"📈 Detailed Dashboard: {FULL_STOCK_NAME} ({CURRENT_STOCK})") # Updated header
+st.header(f"📈 Detailed Dashboard: {FULL_STOCK_NAME} ({CURRENT_STOCK})")
 st.write(f"Comprehensive insights for {FULL_STOCK_NAME} on BSE/NSE.")
 
-# --- NEW: Auto-refresh the page every 30 seconds for live updates ---
-# This will cause the entire script to re-run, fetching fresh prices/news if caches expire.
 st_autorefresh(interval=30 * 1000, key=f"data_refresh_{CURRENT_STOCK}") 
 
-
-# Display BSE and NSE prices (fetched directly here from yfinance)
 st.markdown("---")
 st.subheader("Current Market Prices")
 
-# Using st.empty() to allow for potential future granular updates if not using full page refresh
-# For now, with st_autorefresh, the whole block re-renders anyway.
 price_placeholder = st.empty()
 
-# Fetch both BSE and NSE prices using yfinance directly
-bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE") # Example: IRCTC.BO for BSE
-nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE") # Example: IRCTC.NS for NSE
+bse_price = get_live_stock_price_yf(CURRENT_STOCK, "BSE")
+nse_price = get_live_stock_price_yf(CURRENT_STOCK, "NSE")
 
 with price_placeholder.container():
     if bse_price is not None and nse_price is not None:
@@ -372,36 +351,31 @@ with price_placeholder.container():
     else:
         st.info("Attempting to fetch live prices (using mock if API fails)... Please ensure internet connection and correct stock symbols.")
     
-    # Get current time in IST for display
     ist_timezone = pytz.timezone('Asia/Kolkata')
     current_ist_time = datetime.now(ist_timezone)
-    formatted_time = current_ist_time.strftime('%Y-%m-%d %H:%M:%S IST') # Added IST for clarity
+    formatted_time = current_ist_time.strftime('%Y-%m-%d %H:%M:%S IST')
     st.markdown(f"<p style='text-align: right; font-size: 0.8em; color: gray;'>Last updated: {formatted_time}</p>", unsafe_allow_html=True)
 
 
-# Timeframe Controls
 st.subheader("Select Timeframe:")
 timeframe_options = ["5m", "1d", "1w", "1m", "1y"]
 selected_timeframe = st.radio(
     "Timeframe",
     timeframe_options,
-    index=timeframe_options.index("1y"), # Default to 1y
+    index=timeframe_options.index("1y"),
     horizontal=True,
     label_visibility="collapsed"
 )
 
-# Generate stock data based on selection (fetched directly here from yfinance)
-stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE") # Assume NSE for graphs by default
+stock_data = get_historical_ohlc_yf(CURRENT_STOCK, selected_timeframe, "NSE")
 
-# --- Graphs Section (Stacked Vertically) ---
 st.markdown("---")
 st.subheader(f"Price Charts for {FULL_STOCK_NAME} ({CURRENT_STOCK})")
 
 if not stock_data.empty:
-    # Candlestick Chart
     st.markdown("### Candlestick Chart")
     fig_candlestick = go.Figure(data=[go.Candlestick(
-        x=stock_data.index, # Use index (Date) for x-axis
+        x=stock_data.index,
         open=stock_data['Open'],
         high=stock_data['High'],
         low=stock_data['Low'],
@@ -418,10 +392,9 @@ if not stock_data.empty:
     )
     st.plotly_chart(fig_candlestick, use_container_width=True)
 
-    # Normal Line Graph
     st.markdown("### Normal Line Graph (Close Price)")
     fig_line = go.Figure(data=go.Scatter(
-        x=stock_data.index, # Use index (Date) for x-axis
+        x=stock_data.index,
         y=stock_data['Close'],
         mode='lines',
         line=dict(color='#4f46e5', width=2)
@@ -441,39 +414,32 @@ else:
 st.markdown("---")
 st.subheader("Processing Latest News for Strategy Decision")
 
-# Fetch news specifically for IRCTC
-# Changed query for broader initial retrieval, then filter with NER
 raw_articles = get_financial_news_api(f'"{FULL_STOCK_NAME}" OR "{CURRENT_STOCK}" Indian Railways OR IRCTC stock India')
 
 # Initialize latest_trading_signal with default values
 latest_trading_signal = {
     "ticker": CURRENT_STOCK,
-    "sentiment": "N/A",
-    "event": "No relevant news found", # Default event if no news matches
+    "sentiment": "neutral", # Default sentiment if no news found
+    "event": "No relevant news found",
     "confidence": 0.00,
     "recommended_action": "HOLD",
     "stop_loss": 0.00,
     "take_profit": 0.00
 }
 
-# List to hold news articles deemed relevant enough for display
 processed_relevant_news_for_display = []
-
-# Process and filter news articles
 relevant_news_found_for_signal = False
+
 if raw_articles:
     ist_timezone = pytz.timezone('Asia/Kolkata')
     for news_item in raw_articles:
         full_text = f"{news_item.get('title', '')} {news_item.get('content', '')}"
-            
-        # Use the refined NER to check if the article is specifically about IRCTC
         ticker_identified = perform_ner(full_text, CURRENT_STOCK, FULL_STOCK_NAME)
         
-        if ticker_identified == CURRENT_STOCK: # Only process if it's explicitly about IRCTC
-            sentiment = analyze_sentiment(full_text) # This now uses FinBERT
-            action_data = map_news_to_action(sentiment)
+        if ticker_identified == CURRENT_STOCK:
+            sentiment, confidence = analyze_sentiment(full_text)
+            action_data = map_news_to_action(sentiment, confidence)
             
-            # Convert publishedAt to IST (if available and valid)
             published_utc_str = news_item.get("publishedAt", "N/A")
             published_ist_str = "N/A"
             if published_utc_str != "N/A":
@@ -484,7 +450,6 @@ if raw_articles:
                 except ValueError:
                     published_ist_str = "Invalid Date Format"
 
-            # Add to list for display
             processed_relevant_news_for_display.append({
                 "source": news_item["source"],
                 "title": news_item["title"],
@@ -497,12 +462,11 @@ if raw_articles:
                 "confidence": action_data["confidence"]
             })
 
-            # For the trading bot output, use the first relevant article found
             if not relevant_news_found_for_signal:
                 latest_trading_signal = {
-                    "ticker": CURRENT_STOCK, # Always force to CURRENT_STOCK for this page
+                    "ticker": CURRENT_STOCK,
                     "sentiment": sentiment,
-                    "event": news_item.get("title", "News Article"), # Use news title as event
+                    "event": news_item.get("title", "News Article"),
                     "confidence": action_data["confidence"],
                     "recommended_action": action_data["recommended_action"],
                     "stop_loss": action_data["stop_loss"],
@@ -515,13 +479,11 @@ if relevant_news_found_for_signal:
 else:
     st.info(f"No specific news found for {FULL_STOCK_NAME} that directly mentions the company in recent articles. Using a default neutral signal for strategy decision.")
 
-
 # --- Relevant News Articles Display Section ---
 st.markdown("---")
 st.subheader(f"Relevant News Articles for {FULL_STOCK_NAME} ({CURRENT_STOCK})")
 
 if processed_relevant_news_for_display:
-    # Display news in two columns
     news_col1, news_col2 = st.columns(2)
     for i, news in enumerate(processed_relevant_news_for_display):
         news_html = f"""
@@ -533,15 +495,15 @@ if processed_relevant_news_for_display:
             <div style="display: flex; align-items: center; margin-top: 0.5rem; font-size: 0.875rem;">
                 <span style="font-weight: 500;">Sentiment:</span>
                 <span style="font-weight: 700; color: {'#16a34a' if news['sentiment'] == 'positive' else ('#dc2626' if news['sentiment'] == 'negative' else '#f59e0b')}; margin-left: 0.25rem;">
-                                        {news['sentiment'].upper()}
-                                    </span>
-                                    <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
-                                    <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
-                                        {news['recommended_action']}
-                                    </span>
-                                </div>
-                            </div>
-                            """
+                    {news['sentiment'].upper()}
+                </span>
+                <span style="font-weight: 500; margin-left: 1rem;">Action:</span>
+                <span style="font-weight: 700; color: {'#16a34a' if news['recommended_action'] == 'BUY' else ('#dc2626' if news['recommended_action'] == 'SELL/SHORT' else '#3b82f6')}; margin-left: 0.25rem;">
+                    {news['recommended_action']}
+                </span>
+            </div>
+        </div>
+        """
         if i % 2 == 0:
             with news_col1:
                 st.markdown(news_html, unsafe_allow_html=True)
@@ -556,18 +518,17 @@ else:
 st.markdown("---")
 st.markdown("## 🧠 Strategy Decision Engine")
 
-# Ensure stock_data has no NaNs and is sorted
 strategy_data = stock_data.copy().dropna()
 strategy_data.sort_index(inplace=True)
 
-signals_summary = []  # Store individual strategy results
+# Define a dictionary to hold signals and their weights
+action_weights = {"BUY": 0, "SELL/SHORT": 0, "HOLD": 0}
 
 # --- 1. EMA Crossover ---
-# Fillna(0) ensures no errors if initial data is NaN, though dropna() above should handle most.
 ema20 = ta.trend.ema_indicator(strategy_data['Close'], window=20).fillna(0)
 ema50 = ta.trend.ema_indicator(strategy_data['Close'], window=50).fillna(0)
-ema_signal = "BUY" if ema20.iloc[-1] > ema50.iloc[-1] else "SELL"
-signals_summary.append(ema_signal)
+ema_signal = "BUY" if ema20.iloc[-1] > ema50.iloc[-1] else "SELL/SHORT"
+action_weights[ema_signal] += 1.0
 
 with st.container():
     st.markdown(f"""
@@ -581,8 +542,8 @@ with st.container():
 # --- 2. SMA Crossover ---
 sma20 = ta.trend.sma_indicator(strategy_data['Close'], window=20).fillna(0)
 sma50 = ta.trend.sma_indicator(strategy_data['Close'], window=50).fillna(0)
-sma_signal = "BUY" if sma20.iloc[-1] > sma50.iloc[-1] else "SELL"
-signals_summary.append(sma_signal)
+sma_signal = "BUY" if sma20.iloc[-1] > sma50.iloc[-1] else "SELL/SHORT"
+action_weights[sma_signal] += 1.0
 
 st.markdown(f"""
 <div style='background-color: #f0fdf4; padding: 1rem; border-radius: 0.5rem;'>
@@ -594,8 +555,8 @@ st.markdown(f"""
 
 # --- 3. RSI Strategy ---
 rsi = ta.momentum.RSIIndicator(strategy_data['Close'], window=14).rsi().fillna(50)
-rsi_signal = "BUY" if rsi.iloc[-1] < 30 else ("SELL" if rsi.iloc[-1] > 70 else "HOLD")
-signals_summary.append(rsi_signal)
+rsi_signal = "BUY" if rsi.iloc[-1] < 30 else ("SELL/SHORT" if rsi.iloc[-1] > 70 else "HOLD")
+action_weights[rsi_signal] += 1.0
 
 st.markdown(f"""
 <div style='background-color: #fefce8; padding: 1rem; border-radius: 0.5rem;'>
@@ -607,8 +568,8 @@ st.markdown(f"""
 
 # --- 4. MACD ---
 macd_line = ta.trend.macd_diff(strategy_data['Close']).fillna(0)
-macd_signal = "BUY" if macd_line.iloc[-1] > 0 else "SELL"
-signals_summary.append(macd_signal)
+macd_signal = "BUY" if macd_line.iloc[-1] > 0 else "SELL/SHORT"
+action_weights[macd_signal] += 1.0
 
 st.markdown(f"""
 <div style='background-color: #f0f9ff; padding: 1rem; border-radius: 0.5rem;'>
@@ -622,8 +583,8 @@ st.markdown(f"""
 bbands = ta.volatility.BollingerBands(strategy_data['Close'], window=20)
 bb_lower = bbands.bollinger_lband().iloc[-1]
 bb_upper = bbands.bollinger_hband().iloc[-1]
-bb_signal = "BUY" if strategy_data['Close'].iloc[-1] < bb_lower else ("SELL" if strategy_data['Close'].iloc[-1] > bb_upper else "HOLD")
-signals_summary.append(bb_signal)
+bb_signal = "BUY" if strategy_data['Close'].iloc[-1] < bb_lower else ("SELL/SHORT" if strategy_data['Close'].iloc[-1] > bb_upper else "HOLD")
+action_weights[bb_signal] += 1.0
 
 st.markdown(f"""
 <div style='background-color: #fff7ed; padding: 1rem; border-radius: 0.5rem;'>
@@ -633,9 +594,10 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 6. News-Based Strategy ---
+# --- 6. News-Based Strategy (with confidence-based weight) ---
 news_sentiment_signal = latest_trading_signal.get("recommended_action", "HOLD")
-signals_summary.append(news_sentiment_signal)
+news_weight = latest_trading_signal.get("confidence", 0) * 2.0  # Give news a higher influence when confident
+action_weights[news_sentiment_signal] += news_weight
 
 st.markdown(f"""
 <div style='background-color: #ede9fe; padding: 1rem; border-radius: 0.5rem;'>
@@ -646,30 +608,38 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- Final Aggregated Decision ---
-from collections import Counter
-vote_count = Counter(signals_summary)
-final_signal = vote_count.most_common(1)[0][0] # Get the most common signal
+final_signal = max(action_weights, key=action_weights.get)
+
+# Get current price for final output
+current_price_for_output = nse_price if nse_price is not None else bse_price
+if current_price_for_output is None:
+    current_price_for_output = 0.0
 
 st.markdown(f"""
 <div style='background-color: #dcfce7; padding: 1rem; border-radius: 0.5rem; margin-top: 1rem;'>
-    <h3>🧾 <strong>Final Trading Decision</strong></h3>
-    <p><strong>Signals Summary:</strong> {signals_summary}</p>
-    <p><strong>Majority Vote:</strong> <span style='color: #065f46; font-weight: bold;'>{final_signal}</span></p>
+    <h3>🧾 <strong>Final Trading Decision (Weighted)</strong></h3>
+    <p><strong>Weighted Votes:</strong>
+    <span style='color: green;'>BUY: {action_weights['BUY']:.2f}</span> |
+    <span style='color: red;'>SELL/SHORT: {action_weights['SELL/SHORT']:.2f}</span> |
+    <span style='color: orange;'>HOLD: {action_weights['HOLD']:.2f}</span></p>
+    <p><strong>Final Decision:</strong> <span style='color: #065f46; font-weight: bold; font-size: 1.2rem;'>{final_signal}</span></p>
 </div>
 """, unsafe_allow_html=True)
 
-# --- Trading Bot Signal Output --- 
-st.markdown("---") 
-st.subheader("Trading Bot Signal (Simulated)") 
-st.write("This structured JSON output is generated directly by your Streamlit app based on processed news and technical indicators.") 
-st.code(f""" 
-{{ 
-    "ticker": "{latest_trading_signal['ticker']}", 
-    "sentiment": "{latest_trading_signal['sentiment']}", 
-    "event": "{latest_trading_signal['event']}", 
-    "confidence": {latest_trading_signal['confidence']}, 
-    "recommended_action": "{latest_trading_signal['recommended_action']}", 
-    "stop_loss": {latest_trading_signal['stop_loss']}, 
-    "take_profit": {latest_trading_signal['take_profit']} 
-}} 
+# --- Trading Bot Signal Output ---
+st.markdown("---")
+st.subheader("Trading Bot Signal (Simulated)")
+st.write("This structured JSON output is generated directly by your Streamlit app based on processed news and technical indicators.")
+st.code(f"""
+{{
+    "ticker": "{latest_trading_signal['ticker']}",
+    "current_price": {current_price_for_output:.2f},
+    "strategy_decision": "{final_signal}",
+    "sentiment": "{latest_trading_signal['sentiment']}",
+    "event": "{latest_trading_signal['event']}",
+    "confidence": {latest_trading_signal['confidence']},
+    "recommended_action": "{latest_trading_signal['recommended_action']}",
+    "stop_loss_percent": {latest_trading_signal['stop_loss']},
+    "take_profit_percent": {latest_trading_signal['take_profit']}
+}}
 """, language='json')
