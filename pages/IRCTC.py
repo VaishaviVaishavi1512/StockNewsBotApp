@@ -412,7 +412,6 @@ st.subheader("Processing Latest News for Strategy Decision")
 
 raw_articles = get_financial_news_api(f'"{FULL_STOCK_NAME}" OR "{CURRENT_STOCK}" Indian Railways OR IRCTC stock India')
 
-# Initialize latest_trading_signal with default values
 latest_trading_signal = {
     "ticker": CURRENT_STOCK,
     "sentiment": "neutral",
@@ -480,7 +479,6 @@ if not relevant_news_found_for_signal:
         {"title": "Regulatory Fine Imposed on IRCTC for Service Delay", "content": "IRCTC has been issued a small fine by regulators due to an unforeseen service delay, which could temporarily impact market sentiment.", "source": "Mock Stock Watch", "publishedAt": (datetime.now() - timedelta(hours=12)).isoformat(), "url": "#"}
     ]
     
-    # Process mock articles to populate the display list and signal
     for news_item in mock_articles:
         sentiment, confidence = analyze_sentiment(f"{news_item['title']} {news_item['content']}")
         action_data = map_news_to_action(sentiment, confidence)
@@ -495,17 +493,21 @@ if not relevant_news_found_for_signal:
             "recommended_action": action_data["recommended_action"],
             "confidence": action_data["confidence"]
         })
-        if not relevant_news_found_for_signal:
-            latest_trading_signal = {
-                "ticker": CURRENT_STOCK,
-                "sentiment": sentiment,
-                "event": news_item.get("title", "Mock News Article"),
-                "confidence": action_data["confidence"],
-                "recommended_action": action_data["recommended_action"],
-                "stop_loss": action_data["stop_loss"],
-                "take_profit": action_data["take_profit"]
-            }
-            relevant_news_found_for_signal = True
+    # Update the latest trading signal with the sentiment of the first mock article
+    if mock_articles:
+        first_mock_sentiment, first_mock_confidence = analyze_sentiment(f"{mock_articles[0]['title']} {mock_articles[0]['content']}")
+        first_mock_action_data = map_news_to_action(first_mock_sentiment, first_mock_confidence)
+        latest_trading_signal = {
+            "ticker": CURRENT_STOCK,
+            "sentiment": first_mock_sentiment,
+            "event": mock_articles[0].get("title", "Mock News Article"),
+            "confidence": first_mock_action_data["confidence"],
+            "recommended_action": first_mock_action_data["recommended_action"],
+            "stop_loss": first_mock_action_data["stop_loss"],
+            "take_profit": first_mock_action_data["take_profit"]
+        }
+    else:
+        st.warning("No mock data available. News section will be empty.")
 
 
 # --- Relevant News Articles Display Section ---
