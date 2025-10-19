@@ -41,3 +41,5 @@ plotly==6.1.2
 protobuf==6.32.1
 yfinance
 ta
+transformers
+accelerate
