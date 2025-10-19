@@ -10,7 +10,7 @@ cffi==1.17.1
 charset-normalizer==3.4.2
 click==8.2.1
 colorama==0.4.6
-contourpy==1.3.2
+contourpy
 curl_cffi==0.11.3
 cycler==0.12.1
 fastapi==0.115.12
@@ -26,12 +26,12 @@ jsonschema-specifications==2025.4.1
 kiwisolver==1.4.8
 lxml==5.4.0
 MarkupSafe==3.0.2
-matplotlib==3.10.3
+matplotlib
 mplfinance==0.12.10b0
 multitasking==0.0.11
 narwhals==1.42.0
-numpy==2.3.4
-pandas==2.3.2
+numpy
+pandas
 pandas-datareader==0.10.0
 pandas-ta
 peewee==3.18.1
@@ -39,3 +39,4 @@ Pillow==11.2.1
 platformdirs==4.3.8
 plotly==6.1.2
 protobuf==6.32.1
+yfinance
