@@ -1,4 +1,3 @@
-
 altair==5.5.0
 annotated-types==0.7.0
 anyio==4.9.0
@@ -47,7 +46,6 @@ torch
 transformers
 accelerate
 streamlit-autorefresh
-=======
 streamlit==1.45.1
 protobuf==3.20.3
 numpy==1.26.4
