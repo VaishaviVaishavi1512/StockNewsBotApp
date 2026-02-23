@@ -8,7 +8,6 @@ yfinance==0.2.63
 beautifulsoup4==4.13.4
 requests==2.32.4
 lxml==5.4.0
-pandas-ta==0.3.14b0
 mplfinance==0.12.10b0
 ta==0.11.0
 transformers==4.41.2
